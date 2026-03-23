@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useEffect, useMemo, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useBinanceTicker, useBinanceKlines, useBinanceDepth, useBinanceTrades } from '../components/terminal/useBinanceWS';
 import TickerBar from '../components/terminal/TickerBar';
@@ -67,6 +67,29 @@ export default function Terminal() {
   const bg          = theme === 'light' ? 'hsl(210,20%,93%)' : 'hsl(222,47%,10%)';
   const borderColor = theme === 'light' ? 'hsl(210,20%,82%)' : 'hsl(217,33%,20%)';
 
+  // ── Resizable right column ──────────────────────────────────────────────
+  const [rightColWidth, setRightColWidth] = useState(280);
+  const dragStartX   = useRef(null);
+  const dragStartW   = useRef(null);
+
+  const onDividerMouseDown = useCallback((e) => {
+    e.preventDefault();
+    dragStartX.current = e.clientX;
+    dragStartW.current = rightColWidth;
+
+    const onMove = (ev) => {
+      const delta = dragStartX.current - ev.clientX; // drag left → wider right col
+      const next = Math.max(200, Math.min(520, dragStartW.current + delta));
+      setRightColWidth(next);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [rightColWidth]);
+
   return (
     <div className="flex flex-col h-full overflow-hidden" data-qt-theme={theme} style={{ background: bg }}>
 
@@ -77,8 +100,8 @@ export default function Terminal() {
 
       {/* Main content */}
       <div
-        className="flex-1 grid gap-[2px] p-[2px] min-h-0 overflow-hidden"
-        style={{ gridTemplateColumns: '170px minmax(0, 7fr) minmax(220px, 3fr)' }}
+        className="flex-1 grid p-[2px] min-h-0 overflow-hidden"
+        style={{ gridTemplateColumns: `170px 2px 1fr 5px ${rightColWidth}px`, gap: '2px', columnGap: 0 }}
       >
 
         {/* Left column — watchlist + order book */}
@@ -97,6 +120,9 @@ export default function Terminal() {
           </div>
         </div>
 
+        {/* Left column separator (fixed, no drag) */}
+        <div style={{ width: 2, background: 'hsl(217,33%,20%)' }} />
+
         {/* Chart — takes all remaining horizontal space */}
         <div className="flex-1 min-w-0 min-h-0">
           <PriceChart
@@ -109,6 +135,31 @@ export default function Terminal() {
             onDateRangeChange={setDateRange}
             onVisibleRangeChange={setVisibleRange}
             tickers={tickers}
+          />
+        </div>
+
+        {/* Drag divider between chart and right column */}
+        <div
+          onMouseDown={onDividerMouseDown}
+          style={{
+            width: 5,
+            cursor: 'col-resize',
+            background: 'transparent',
+            position: 'relative',
+            zIndex: 20,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <div style={{
+            width: 2,
+            height: '100%',
+            background: 'hsl(217,33%,22%)',
+            transition: 'background 0.15s',
+          }}
+            onMouseEnter={e => e.currentTarget.style.background = '#3b82f6'}
+            onMouseLeave={e => e.currentTarget.style.background = 'hsl(217,33%,22%)'}
           />
         </div>
 
