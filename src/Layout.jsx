@@ -215,15 +215,6 @@ function NavBar() {
       </Link>
 
       <div className="ml-auto flex items-center gap-2">
-        <div
-          className="hidden rounded-2xl border px-3 py-2 text-[11px] text-slate-500 xl:flex"
-          style={{
-            borderColor: theme === 'light' ? 'rgba(148,163,184,0.28)' : 'rgba(148,163,184,0.12)',
-            background: theme === 'light' ? 'rgba(255,255,255,0.82)' : 'rgba(20,30,55,0.52)',
-          }}
-        >
-          Realtime market workspace
-        </div>
         <ThemeToggleBtn />
         <UserProfileMenu />
       </div>
