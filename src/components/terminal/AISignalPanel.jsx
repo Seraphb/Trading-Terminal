@@ -5,6 +5,21 @@ import { saveSignal } from '@/lib/signalStore';
 
 const DEEPSEEK_API_KEY = 'sk-54b1762e290440d59d8ed192c1336cc3';
 
+function getTgConfig() {
+  try { return JSON.parse(localStorage.getItem('scanner_telegram_config') || '{}'); } catch { return {}; }
+}
+async function sendTelegram(token, chatId, text) {
+  if (!token || !chatId) return;
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' }),
+    });
+    if (!r.ok) console.warn('Telegram send failed:', await r.text());
+  } catch (e) { console.warn('Telegram error:', e); }
+}
+
 export default function AISignalPanel({ symbol, klines, ticker }) {
   const [signal, setSignal] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -86,6 +101,19 @@ Respond ONLY with valid JSON:
       });
 
       setSignal(result);
+
+      // Send to Telegram if configured
+      const tg = getTgConfig();
+      if (tg.botToken && tg.chatId) {
+        const dir = result.direction === 'LONG' ? '🟢 LONG' : result.direction === 'SHORT' ? '🔴 SHORT' : '🟡 NEUTRAL';
+        const sym = symbol.toUpperCase().replace('USDT', '/USDT');
+        const entry = result.entry_price ? `$${result.entry_price.toLocaleString(undefined, { maximumFractionDigits: 4 })}` : '—';
+        const tp    = result.target_price ? `$${result.target_price.toLocaleString(undefined, { maximumFractionDigits: 4 })}` : '—';
+        const sl    = result.stop_loss    ? `$${result.stop_loss.toLocaleString(undefined, { maximumFractionDigits: 4 })}` : '—';
+        const rr    = result.risk_reward_ratio ? `1:${result.risk_reward_ratio.toFixed(1)}` : '—';
+        const msg = `🤖 <b>AI SIGNAL — ${sym}</b>\n${dir}  •  Confidence: <b>${result.confidence}%</b>\n\n💰 Entry: <code>${entry}</code>\n🎯 Target: <code>${tp}</code>\n🛑 Stop: <code>${sl}</code>\n⚖️ R:R: <b>${rr}</b>\n\n📝 ${result.reasoning || ''}`;
+        sendTelegram(tg.botToken, tg.chatId, msg);
+      }
     } catch (err) {
       console.error('AI Signal error:', err);
       setSignal({ error: err.message });

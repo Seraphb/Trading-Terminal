@@ -1,4 +1,5 @@
 import React, { Suspense, lazy, useState, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../components/ThemeContext';
 import {
   Search, Loader2, TrendingUp, TrendingDown, Filter, Eye,
@@ -21,6 +22,15 @@ function calcEMA(closes, period) {
     ema.push(closes[i] * k + ema[ema.length - 1] * (1 - k));
   }
   return ema;
+}
+
+function calcSMA(closes, period) {
+  if (closes.length < period) return [];
+  const sma = [];
+  for (let i = period - 1; i < closes.length; i++) {
+    sma.push(closes.slice(i - period + 1, i + 1).reduce((a, b) => a + b, 0) / period);
+  }
+  return sma;
 }
 
 function calcRSI(closes, period = 14) {
@@ -112,15 +122,33 @@ function computeIndicators(klines, ticker) {
   const price = closes[closes.length - 1] || 0;
 
   const rsi = calcRSI(closes);
-  const ema20 = calcEMA(closes, 20);
-  const ema50 = calcEMA(closes, 50);
-  const ema20Last = ema20.length > 0 ? ema20[ema20.length - 1] : null;
-  const ema50Last = ema50.length > 0 ? ema50[ema50.length - 1] : null;
 
-  const ema20Signal = ema20Last != null ? (price > ema20Last ? 'above' : 'below') : null;
-  const ema50Signal = ema50Last != null ? (price > ema50Last ? 'above' : 'below') : null;
+  // Compute all MA period signals + values (EMA + SMA)
+  const emaSignals = {};
+  const emaValues = {};
+  const smaValues = {};
+  MA_PERIODS.forEach(p => {
+    const ema = calcEMA(closes, p);
+    if (ema.length > 0) {
+      const val = ema[ema.length - 1];
+      emaValues[p] = val;
+      emaSignals[p] = price > val ? 'above' : 'below';
+    }
+    const sma = calcSMA(closes, p);
+    if (sma.length > 0) smaValues[p] = sma[sma.length - 1];
+  });
 
-  const emaCross = detectEmaCrossover(closes, 9, 21);
+  // Compute all cross pairs
+  const emaCrosses = {};
+  CROSS_PAIRS.forEach(([s, l]) => {
+    emaCrosses[`${s}_${l}`] = detectEmaCrossover(closes, s, l);
+  });
+
+  const ema20Last = emaSignals[21] ? calcEMA(closes, 21).slice(-1)[0] : null;
+  const ema50Last = emaSignals[50] ? calcEMA(closes, 50).slice(-1)[0] : null;
+  const ema20Signal = emaSignals[21] || null;
+  const ema50Signal = emaSignals[50] || null;
+  const emaCross = emaCrosses['9_21'];
 
   const todayVol = volumes[volumes.length - 1] || 0;
   const avg20Vol = volumes.length >= 21
@@ -161,6 +189,10 @@ function computeIndicators(klines, ticker) {
     ema20Value: ema20Last,
     ema50Value: ema50Last,
     emaCross,
+    emaSignals,
+    emaValues,
+    smaValues,
+    emaCrosses,
     volumeChange: Math.round(volumeChange * 100) / 100,
     atr: atr != null ? Math.round(atr * 10000) / 10000 : null,
     macdCross: macd.cross,
@@ -210,6 +242,19 @@ function generateStockPlaceholder(ticker) {
   else if (signalScore <= -2) signalStatus = 'strong_sell';
   else if (signalScore <= -1) signalStatus = 'sell';
 
+  const emaSignals = {};
+  const emaValues = {};
+  const smaValues = {};
+  MA_PERIODS.forEach(p => {
+    const dir = rng() > 0.45 ? 'above' : 'below';
+    emaSignals[p] = dir;
+    const factor = dir === 'above' ? (0.85 + rng() * 0.14) : (1.01 + rng() * 0.15);
+    emaValues[p] = basePrice * factor;
+    smaValues[p] = basePrice * (factor * (0.98 + rng() * 0.04));
+  });
+  const emaCrosses = {};
+  CROSS_PAIRS.forEach(([s, l]) => { emaCrosses[`${s}_${l}`] = rng() > 0.65 ? 'bullish' : rng() > 0.45 ? 'bearish' : 'none'; });
+
   return {
     symbol: ticker,
     price: Math.round(basePrice * 100) / 100,
@@ -218,6 +263,10 @@ function generateStockPlaceholder(ticker) {
     ema20Signal: ema20Sig,
     ema50Signal: ema50Sig,
     emaCross: emaCrossVal,
+    emaSignals,
+    emaValues,
+    smaValues,
+    emaCrosses,
     volumeChange: Math.round(volChange * 100) / 100,
     atr: Math.round(rng() * 5 * 10000) / 10000,
     macdCross: macdVal,
@@ -242,13 +291,23 @@ const PRESETS = [
     filters: { ema20: 'above', ema50: 'above', macd: 'bullish' } },
 ];
 
+const MA_PERIODS = [9, 21, 50, 100, 200];
+const CROSS_PAIRS = [[9,21],[9,50],[21,50],[50,100],[100,200]];
+
 const DEFAULT_FILTERS = {
   rsiEnabled: false,
   rsiMin: 0,
   rsiMax: 100,
-  ema20: 'any',
-  ema50: 'any',
   emaCross: 'any',
+  emaCrossEnabled: false,
+  crossShort: 9,
+  crossLong: 21,
+  vsMa: 'any',
+  vsMaPeriod: 50,
+  maDistEnabled: true,
+  maDistPeriod: 'ema_200', // 'ema_N' or 'sma_N'
+  maDistMode: 'within',    // 'within' | 'above' | 'below'
+  maDistPct: 5,
   volumeChangeMin: null,
   priceChangePreset: 'any',
   macd: 'any',
@@ -263,9 +322,24 @@ function matchesFilters(ind, filters) {
   if (filters.rsiEnabled && ind.rsi != null) {
     if (ind.rsi < filters.rsiMin || ind.rsi > filters.rsiMax) return false;
   }
-  if (filters.ema20 !== 'any' && ind.ema20Signal !== filters.ema20) return false;
-  if (filters.ema50 !== 'any' && ind.ema50Signal !== filters.ema50) return false;
-  if (filters.emaCross !== 'any' && ind.emaCross !== filters.emaCross) return false;
+  if (filters.emaCrossEnabled && filters.emaCross !== 'any') {
+    const key = `${filters.crossShort}_${filters.crossLong}`;
+    if ((ind.emaCrosses?.[key] || 'none') !== filters.emaCross) return false;
+  }
+  if (filters.vsMa !== 'any') {
+    if ((ind.emaSignals?.[filters.vsMaPeriod] || null) !== filters.vsMa) return false;
+  }
+  if (true) {
+    const [type, periodStr] = filters.maDistPeriod.split('_');
+    const period = Number(periodStr);
+    const maVal = type === 'sma' ? ind.smaValues?.[period] : ind.emaValues?.[period];
+    if (maVal == null) return false;
+    const dist = ((ind.price - maVal) / maVal) * 100;
+    const pct = filters.maDistPct;
+    if (filters.maDistMode === 'within' && Math.abs(dist) > pct) return false;
+    if (filters.maDistMode === 'above' && (dist < 0 || dist > pct)) return false;
+    if (filters.maDistMode === 'below' && (dist > 0 || dist < -pct)) return false;
+  }
   if (filters.volumeChangeMin != null && ind.volumeChange < filters.volumeChangeMin) return false;
   if (filters.priceChangePreset !== 'any') {
     const pc = ind.priceChange24h;
@@ -320,6 +394,7 @@ function fmtVol(n) {
 export default function Screener() {
   const { theme } = useTheme();
   const dark = theme === 'dark';
+  const navigate = useNavigate();
 
   const bg       = dark ? '#0f172a' : '#f8fafc';
   const cardBg   = dark ? '#1e293b' : '#ffffff';
@@ -338,6 +413,20 @@ export default function Screener() {
   const [terminalResult, setTerminalResult] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [error, setError] = useState(null);
+  const [symbolSearch, setSymbolSearch] = useState('');
+  const [timeframe, setTimeframe] = useState('1h');
+  const [dateRange, setDateRange] = useState('1M');
+
+  const DATE_RANGE_MAP = {
+    '1D':  { interval: '5m',  limit: 288 },
+    '1W':  { interval: '1h',  limit: 168 },
+    '1M':  { interval: '4h',  limit: 180 },
+    '3M':  { interval: '1d',  limit: 90  },
+    '6M':  { interval: '1d',  limit: 180 },
+    '1Y':  { interval: '1d',  limit: 365 },
+  };
+  const TIMEFRAMES = ['1m','5m','15m','1h','4h','1d','1w'];
+  const DATE_RANGES = ['1D','1W','1M','3M','6M','1Y'];
 
   /* --- apply preset --- */
   const applyPreset = useCallback((preset) => {
@@ -358,15 +447,24 @@ export default function Screener() {
     setScanning(true);
     setError(null);
     setResults([]);
+    const rangeConfig = DATE_RANGE_MAP[dateRange] || DATE_RANGE_MAP['1M'];
+    const klineInterval = timeframe !== '1h' ? timeframe : rangeConfig.interval;
+    const klineLimit = rangeConfig.limit;
     try {
       const tickerRes = await fetch('https://api.binance.com/api/v3/ticker/24hr');
       if (!tickerRes.ok) throw new Error(`Ticker API error: ${tickerRes.status}`);
       const tickers = await tickerRes.json();
 
-      const usdtTickers = tickers
+      let usdtTickers = tickers
         .filter(t => t.symbol.endsWith('USDT') && !t.symbol.includes('UP') && !t.symbol.includes('DOWN'))
-        .sort((a, b) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
-        .slice(0, 50);
+        .sort((a, b) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume));
+
+      if (symbolSearch.trim()) {
+        const q = symbolSearch.trim().toUpperCase().replace('/USDT','').replace('USDT','');
+        usdtTickers = usdtTickers.filter(t => t.symbol.startsWith(q));
+      } else {
+        usdtTickers = usdtTickers.slice(0, 50);
+      }
 
       const symbols = usdtTickers.map(t => t.symbol);
       const tickerMap = {};
@@ -381,7 +479,7 @@ export default function Screener() {
         const promises = batch.map(async (sym) => {
           try {
             const res = await fetch(
-              `https://api.binance.com/api/v3/klines?symbol=${sym}&interval=1h&limit=100`
+              `https://api.binance.com/api/v3/klines?symbol=${sym}&interval=${klineInterval}&limit=${klineLimit}`
             );
             if (!res.ok) return null;
             const klines = await res.json();
@@ -402,7 +500,7 @@ export default function Screener() {
     } finally {
       setScanning(false);
     }
-  }, [filters]);
+  }, [filters, timeframe, dateRange, symbolSearch]);
 
   /* --- scan stocks (placeholder) --- */
   const runStockScan = useCallback(() => {
@@ -482,87 +580,156 @@ export default function Screener() {
     { key: 'priceChange24h',label: '24h %',       w: '80px'  },
     { key: 'rsi',           label: 'RSI(14)',     w: '70px'  },
     { key: 'signalStatus',  label: 'Signal',      w: '95px'  },
-    { key: 'ema20Signal',   label: 'EMA20',       w: '75px'  },
-    { key: 'ema50Signal',   label: 'EMA50',       w: '75px'  },
+    { key: 'dist21',        label: 'Δ MA21',      w: '75px'  },
+    { key: 'dist50',        label: 'Δ MA50',      w: '75px'  },
+    { key: 'dist200',       label: 'Δ MA200',     w: '75px'  },
     { key: 'emaCross',      label: 'EMA Cross',   w: '90px'  },
     { key: 'volumeChange',  label: 'Vol Chg %',   w: '90px'  },
     { key: 'macdCross',     label: 'MACD',        w: '85px'  },
     { key: 'quoteVolume',   label: 'Volume 24h',  w: '100px' },
   ];
 
+  // Pre-compute distances for sorting/display
+  const sortedResultsWithDist = useMemo(() => {
+    return sortedResults.map(row => ({
+      ...row,
+      dist21:  row.emaValues?.[21]  ? ((row.price - row.emaValues[21])  / row.emaValues[21])  * 100 : null,
+      dist50:  row.emaValues?.[50]  ? ((row.price - row.emaValues[50])  / row.emaValues[50])  * 100 : null,
+      dist200: row.emaValues?.[200] ? ((row.price - row.emaValues[200]) / row.emaValues[200]) * 100 : null,
+    }));
+  }, [sortedResults]);
+
+  const sidebarBg  = dark ? 'hsl(217,33%,7%)'  : '#f1f5f9';
+  const topBarBg   = dark ? 'hsl(217,33%,7%)'  : '#f1f5f9';
+  const rowHoverBg = dark ? 'hsl(217,33%,14%)' : '#eef2f7';
+
   return (
     <div style={{ display: 'flex', height: '100%', width: '100%', background: bg, color: textC, fontFamily: "'Inter', sans-serif", overflow: 'hidden' }}>
 
       {/* ═══════════ LEFT SIDEBAR ═══════════ */}
       <div style={{
-        width: sidebarOpen ? '300px' : '0px',
-        minWidth: sidebarOpen ? '300px' : '0px',
+        width: sidebarOpen ? '308px' : '0px',
+        minWidth: sidebarOpen ? '308px' : '0px',
         transition: 'all 0.2s ease',
         overflow: 'hidden',
         borderRight: sidebarOpen ? `1px solid ${borderC}` : 'none',
-        display: 'flex',
-        flexDirection: 'column',
-        background: dark ? '#0b1120' : '#f1f5f9',
+        display: 'flex', flexDirection: 'column',
+        background: sidebarBg,
       }}>
-        <div style={{ padding: '16px', overflowY: 'auto', flex: 1 }}>
+        {/* Sidebar header */}
+        <div style={{ padding: '14px 16px 10px', borderBottom: `1px solid ${borderC}`, display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <SlidersHorizontal size={15} color={accentC} />
+          <span style={{ fontWeight: 700, fontSize: '13px', letterSpacing: '0.3px' }}>Filters</span>
+        </div>
 
-          {/* Title */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-            <SlidersHorizontal size={18} color={accentC} />
-            <span style={{ fontWeight: 700, fontSize: '15px' }}>Technical Screener</span>
-          </div>
+        <div style={{ padding: '14px 14px 0', overflowY: 'auto', flex: 1 }}>
 
           {/* Mode Toggle */}
-          <div style={{ marginBottom: '20px' }}>
-            <div style={{ fontSize: '11px', textTransform: 'uppercase', color: mutedC, marginBottom: '8px', fontWeight: 600, letterSpacing: '0.5px' }}>Mode</div>
-            <div style={{ display: 'flex', borderRadius: '8px', overflow: 'hidden', border: `1px solid ${borderC}` }}>
-              <button
-                onClick={() => switchMode('crypto')}
-                style={{
-                  flex: 1, padding: '8px 12px', border: 'none', cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-                  fontSize: '13px', fontWeight: 600, transition: 'all 0.15s',
-                  background: isCrypto ? accentC : cardBg,
-                  color: isCrypto ? '#fff' : mutedC,
-                }}
-              >
-                <Coins size={14} />
-                Crypto
-              </button>
-              <button
-                onClick={() => switchMode('stocks')}
-                style={{
-                  flex: 1, padding: '8px 12px', border: 'none', cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-                  fontSize: '13px', fontWeight: 600, transition: 'all 0.15s',
-                  background: !isCrypto ? accentC : cardBg,
-                  color: !isCrypto ? '#fff' : mutedC,
-                  borderLeft: `1px solid ${borderC}`,
-                }}
-              >
-                <LineChart size={14} />
-                Stocks
-              </button>
+          <div style={{ marginBottom: '16px' }}>
+            <div style={{
+              display: 'flex', borderRadius: '10px', padding: '3px',
+              background: dark ? 'hsl(217,33%,12%)' : '#e2e8f0',
+              border: `1px solid ${borderC}`,
+            }}>
+              {[{ id: 'crypto', icon: Coins, label: 'Crypto' }, { id: 'stocks', icon: LineChart, label: 'Stocks' }].map(m => {
+                const active = mode === m.id;
+                const Icon = m.icon;
+                return (
+                  <button key={m.id} onClick={() => switchMode(m.id)} style={{
+                    flex: 1, padding: '7px 10px', borderRadius: '8px', border: 'none', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px',
+                    fontSize: '12px', fontWeight: 600, transition: 'all 0.15s',
+                    background: active ? (dark ? accentC : '#fff') : 'transparent',
+                    color: active ? (dark ? '#fff' : accentC) : mutedC,
+                    boxShadow: active ? '0 1px 4px rgba(0,0,0,0.25)' : 'none',
+                  }}>
+                    <Icon size={13} /> {m.label}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
+          {/* Symbol Search */}
+          <div style={{ marginBottom: '14px' }}>
+            <div style={{ fontSize: '10px', textTransform: 'uppercase', color: mutedC, marginBottom: '5px', fontWeight: 700, letterSpacing: '0.7px' }}>
+              {isCrypto ? 'Symbol (USDT pairs)' : 'Stock Symbol'}
+            </div>
+            <div style={{ position: 'relative' }}>
+              <Search size={13} style={{ position: 'absolute', left: '9px', top: '50%', transform: 'translateY(-50%)', color: mutedC, pointerEvents: 'none' }} />
+              <input
+                type="text"
+                value={symbolSearch}
+                onChange={e => setSymbolSearch(e.target.value)}
+                placeholder={isCrypto ? 'e.g. BTC, ETH…' : 'e.g. AAPL, TSLA…'}
+                style={{
+                  width: '100%', padding: '7px 9px 7px 28px', borderRadius: '7px',
+                  border: `1px solid ${borderC}`, background: cardBg, color: textC,
+                  fontSize: '12px', outline: 'none', boxSizing: 'border-box',
+                  transition: 'border-color 0.15s',
+                }}
+                onFocus={e => { e.target.style.borderColor = accentC; }}
+                onBlur={e => { e.target.style.borderColor = borderC; }}
+              />
+            </div>
+          </div>
+
+          {/* Timeframe */}
+          <div style={{ marginBottom: '14px' }}>
+            <div style={{ fontSize: '10px', textTransform: 'uppercase', color: mutedC, marginBottom: '5px', fontWeight: 700, letterSpacing: '0.7px' }}>Timeframe</div>
+            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+              {TIMEFRAMES.map(tf => (
+                <button key={tf} onClick={() => setTimeframe(tf)} style={{
+                  padding: '4px 9px', borderRadius: '6px', border: `1px solid ${timeframe === tf ? accentC + '88' : borderC}`,
+                  background: timeframe === tf ? `${accentC}18` : 'transparent',
+                  color: timeframe === tf ? accentC : mutedC,
+                  fontSize: '11px', fontWeight: 600, cursor: 'pointer', transition: 'all 0.12s',
+                }}>
+                  {tf}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Date Range */}
+          <div style={{ marginBottom: '14px' }}>
+            <div style={{ fontSize: '10px', textTransform: 'uppercase', color: mutedC, marginBottom: '5px', fontWeight: 700, letterSpacing: '0.7px' }}>Date Range</div>
+            <div style={{ display: 'flex', gap: '4px' }}>
+              {DATE_RANGES.map(r => (
+                <button key={r} onClick={() => setDateRange(r)} style={{
+                  flex: 1, padding: '4px 0', borderRadius: '6px', border: `1px solid ${dateRange === r ? accentC + '88' : borderC}`,
+                  background: dateRange === r ? `${accentC}18` : 'transparent',
+                  color: dateRange === r ? accentC : mutedC,
+                  fontSize: '10px', fontWeight: 600, cursor: 'pointer', transition: 'all 0.12s',
+                }}>
+                  {r}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Divider */}
+          <div style={{ height: '1px', background: borderC, marginBottom: '14px' }} />
+
           {/* Presets */}
-          <div style={{ marginBottom: '20px' }}>
-            <div style={{ fontSize: '11px', textTransform: 'uppercase', color: mutedC, marginBottom: '8px', fontWeight: 600, letterSpacing: '0.5px' }}>Presets</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+          <div style={{ marginBottom: '16px' }}>
+            <div style={{ fontSize: '10px', textTransform: 'uppercase', color: mutedC, marginBottom: '7px', fontWeight: 700, letterSpacing: '0.8px' }}>Presets</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px' }}>
               {PRESETS.map(p => {
                 const Icon = p.icon;
                 return (
                   <button key={p.id} onClick={() => applyPreset(p)} style={{
                     display: 'flex', alignItems: 'center', gap: '5px',
-                    padding: '5px 10px', borderRadius: '6px', border: `1px solid ${p.color}33`,
-                    background: `${p.color}15`, color: p.color, fontSize: '12px', fontWeight: 600,
-                    cursor: 'pointer', transition: 'all 0.15s',
+                    padding: '7px 9px', borderRadius: '8px',
+                    border: `1px solid ${p.color}30`,
+                    background: `${p.color}12`, color: p.color,
+                    fontSize: '11px', fontWeight: 600, cursor: 'pointer',
+                    transition: 'all 0.15s', whiteSpace: 'nowrap',
                   }}
-                    onMouseEnter={e => { e.target.style.background = `${p.color}30`; }}
-                    onMouseLeave={e => { e.target.style.background = `${p.color}15`; }}
+                    onMouseEnter={e => { e.currentTarget.style.background = `${p.color}28`; e.currentTarget.style.borderColor = `${p.color}55`; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = `${p.color}12`; e.currentTarget.style.borderColor = `${p.color}30`; }}
                   >
-                    <Icon size={13} /> {p.label}
+                    <Icon size={12} /> {p.label}
                   </button>
                 );
               })}
@@ -575,30 +742,39 @@ export default function Screener() {
             onToggle={() => setFilter('rsiEnabled', !filters.rsiEnabled)}
             accentC={accentC}
           >
-            <div style={{ display: 'flex', gap: '6px', marginBottom: '8px', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: '4px', marginBottom: '8px', flexWrap: 'wrap' }}>
               {[
-                { label: 'Oversold (<30)', fn: () => { setFilter('rsiEnabled', true); setFilter('rsiMin', 0); setFilter('rsiMax', 30); } },
-                { label: 'Overbought (>70)', fn: () => { setFilter('rsiEnabled', true); setFilter('rsiMin', 70); setFilter('rsiMax', 100); } },
+                { label: 'Oversold <30', fn: () => { setFilter('rsiEnabled', true); setFilter('rsiMin', 0); setFilter('rsiMax', 30); } },
+                { label: 'Overbought >70', fn: () => { setFilter('rsiEnabled', true); setFilter('rsiMin', 70); setFilter('rsiMax', 100); } },
                 { label: 'Custom', fn: () => { setFilter('rsiEnabled', true); } },
               ].map(btn => (
                 <button key={btn.label} onClick={btn.fn} style={{
-                  padding: '3px 8px', borderRadius: '4px', border: `1px solid ${borderC}`,
-                  background: cardBg, color: mutedC, fontSize: '11px', cursor: 'pointer',
-                }}>
+                  padding: '3px 7px', borderRadius: '5px', border: `1px solid ${borderC}`,
+                  background: 'transparent', color: mutedC, fontSize: '10px', cursor: 'pointer',
+                  transition: 'all 0.1s',
+                }}
+                  onMouseEnter={e => { e.currentTarget.style.color = textC; e.currentTarget.style.borderColor = accentC; }}
+                  onMouseLeave={e => { e.currentTarget.style.color = mutedC; e.currentTarget.style.borderColor = borderC; }}
+                >
                   {btn.label}
                 </button>
               ))}
             </div>
             {filters.rsiEnabled && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ fontSize: '11px', color: mutedC, width: '24px' }}>{filters.rsiMin}</span>
-                <input type="range" min={0} max={100} value={filters.rsiMin}
-                  onChange={e => setFilter('rsiMin', Number(e.target.value))}
-                  style={{ flex: 1, accentColor: accentC }} />
-                <input type="range" min={0} max={100} value={filters.rsiMax}
-                  onChange={e => setFilter('rsiMax', Number(e.target.value))}
-                  style={{ flex: 1, accentColor: accentC }} />
-                <span style={{ fontSize: '11px', color: mutedC, width: '24px', textAlign: 'right' }}>{filters.rsiMax}</span>
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                  <span style={{ fontSize: '10px', color: accentC, fontWeight: 600 }}>{filters.rsiMin}</span>
+                  <span style={{ fontSize: '10px', color: mutedC }}>RSI range</span>
+                  <span style={{ fontSize: '10px', color: accentC, fontWeight: 600 }}>{filters.rsiMax}</span>
+                </div>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <input type="range" min={0} max={100} value={filters.rsiMin}
+                    onChange={e => setFilter('rsiMin', Number(e.target.value))}
+                    style={{ flex: 1, accentColor: accentC }} />
+                  <input type="range" min={0} max={100} value={filters.rsiMax}
+                    onChange={e => setFilter('rsiMax', Number(e.target.value))}
+                    style={{ flex: 1, accentColor: accentC }} />
+                </div>
               </div>
             )}
           </FilterSection>
@@ -607,75 +783,117 @@ export default function Screener() {
           <FilterSection label="Price Change 24h" mutedC={mutedC} borderC={borderC} cardBg={cardBg}>
             <SelectFilter value={filters.priceChangePreset}
               onChange={v => setFilter('priceChangePreset', v)}
-              options={[['any','Any'],['gt5','> +5%'],['gt10','> +10%'],['lt-5','< -5%'],['lt-10','< -10%']]}
-              cardBg={cardBg} borderC={borderC} textC={textC} />
+              options={[['any','Any'],['gt5','> +5%'],['gt10','> +10%'],['lt-5','< −5%'],['lt-10','< −10%']]}
+              cardBg={cardBg} borderC={borderC} textC={textC} accentC={accentC} dark={dark} />
           </FilterSection>
 
           {/* Min Volume */}
-          <FilterSection label={isCrypto ? 'Min 24h Volume (USDT)' : 'Min 24h Volume ($)'} mutedC={mutedC} borderC={borderC} cardBg={cardBg}>
+          <FilterSection label={isCrypto ? 'Min Volume (USDT)' : 'Min Volume ($)'} mutedC={mutedC} borderC={borderC} cardBg={cardBg}>
             <input type="range" min={0} max={isCrypto ? 500000000 : 5000000000} step={isCrypto ? 5000000 : 50000000}
               value={filters.minVolume}
               onChange={e => setFilter('minVolume', Number(e.target.value))}
               style={{ width: '100%', accentColor: accentC }} />
-            <div style={{ fontSize: '11px', color: mutedC, marginTop: '4px' }}>
-              {filters.minVolume > 0 ? fmtVol(filters.minVolume) : 'Any'}
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '3px' }}>
+              <span style={{ fontSize: '10px', color: mutedC }}>Any</span>
+              <span style={{ fontSize: '10px', color: filters.minVolume > 0 ? accentC : mutedC, fontWeight: 600 }}>
+                {filters.minVolume > 0 ? fmtVol(filters.minVolume) : '—'}
+              </span>
             </div>
           </FilterSection>
 
-          {/* EMA Crossover */}
-          <FilterSection label="EMA Crossover (9/21)" mutedC={mutedC} borderC={borderC} cardBg={cardBg}>
-            <SelectFilter value={filters.emaCross} onChange={v => setFilter('emaCross', v)}
-              options={[['any','Any'],['bullish','Bullish Cross'],['bearish','Bearish Cross']]}
-              cardBg={cardBg} borderC={borderC} textC={textC} />
+          {/* MA Distance */}
+          <FilterSection label="MA Distance %" mutedC={mutedC} borderC={borderC} cardBg={cardBg}>
+            <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '6px' }}>
+              <select value={filters.maDistPeriod} onChange={e => setFilter('maDistPeriod', e.target.value)} style={{
+                flex: 1, background: cardBg, border: `1px solid ${borderC}`, borderRadius: '6px',
+                color: textC, padding: '5px 8px', fontSize: '11px',
+              }}>
+                {['ema_9','ema_21','ema_50','ema_100','ema_200'].map(v => (
+                  <option key={v} value={v}>{v.replace('_',' ').toUpperCase()}</option>
+                ))}
+                {['sma_9','sma_21','sma_50','sma_100','sma_200'].map(v => (
+                  <option key={v} value={v}>{v.replace('_',' ').toUpperCase()}</option>
+                ))}
+              </select>
+              <SelectFilter value={filters.maDistMode} onChange={v => setFilter('maDistMode', v)}
+                options={[['within','Within'],['above','Above'],['below','Below']]}
+                cardBg={cardBg} borderC={borderC} textC={textC} accentC={accentC} dark={dark} />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <input type="range" min={0} max={30} step={0.5}
+                value={filters.maDistPct}
+                onChange={e => setFilter('maDistPct', Number(e.target.value))}
+                style={{ flex: 1, accentColor: accentC }} />
+              <span style={{ fontSize: '11px', color: accentC, minWidth: '32px', textAlign: 'right' }}>
+                {filters.maDistPct}%
+              </span>
+            </div>
           </FilterSection>
 
-          {/* EMA20 */}
-          <FilterSection label="Price vs EMA(20)" mutedC={mutedC} borderC={borderC} cardBg={cardBg}>
-            <SelectFilter value={filters.ema20} onChange={v => setFilter('ema20', v)}
-              options={[['any','Any'],['above','Above'],['below','Below']]}
-              cardBg={cardBg} borderC={borderC} textC={textC} />
+          {/* MA Crossover */}
+          <FilterSection label="MA Crossover" mutedC={mutedC} borderC={borderC} cardBg={cardBg}
+            enabled={filters.emaCrossEnabled}
+            onToggle={() => setFilter('emaCrossEnabled', !filters.emaCrossEnabled)}>
+            <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+              <SelectFilter value={String(filters.crossShort)} onChange={v => setFilter('crossShort', Number(v))}
+                options={MA_PERIODS.map(p => [String(p), `MA ${p}`])}
+                cardBg={cardBg} borderC={borderC} textC={textC} accentC={accentC} dark={dark} />
+              <span style={{ color: mutedC, fontSize: '11px', flexShrink: 0 }}>×</span>
+              <SelectFilter value={String(filters.crossLong)} onChange={v => setFilter('crossLong', Number(v))}
+                options={MA_PERIODS.map(p => [String(p), `MA ${p}`])}
+                cardBg={cardBg} borderC={borderC} textC={textC} accentC={accentC} dark={dark} />
+            </div>
+            <div style={{ marginTop: '6px' }}>
+              <SelectFilter value={filters.emaCross} onChange={v => setFilter('emaCross', v)}
+                options={[['any','Any Direction'],['bullish','Bullish Cross ↑'],['bearish','Bearish Cross ↓']]}
+                cardBg={cardBg} borderC={borderC} textC={textC} accentC={accentC} dark={dark} />
+            </div>
           </FilterSection>
 
-          {/* EMA50 */}
-          <FilterSection label="Price vs EMA(50)" mutedC={mutedC} borderC={borderC} cardBg={cardBg}>
-            <SelectFilter value={filters.ema50} onChange={v => setFilter('ema50', v)}
-              options={[['any','Any'],['above','Above'],['below','Below']]}
-              cardBg={cardBg} borderC={borderC} textC={textC} />
-          </FilterSection>
 
           {/* Volume Change */}
           <FilterSection label="Volume Spike" mutedC={mutedC} borderC={borderC} cardBg={cardBg}>
             <SelectFilter value={filters.volumeChangeMin == null ? 'any' : String(filters.volumeChangeMin)}
               onChange={v => setFilter('volumeChangeMin', v === 'any' ? null : Number(v))}
               options={[['any','Any'],['50','> 50%'],['100','> 100%'],['200','> 200%']]}
-              cardBg={cardBg} borderC={borderC} textC={textC} />
+              cardBg={cardBg} borderC={borderC} textC={textC} accentC={accentC} dark={dark} />
           </FilterSection>
 
           {/* MACD */}
           <FilterSection label="MACD Signal" mutedC={mutedC} borderC={borderC} cardBg={cardBg}>
             <SelectFilter value={filters.macd} onChange={v => setFilter('macd', v)}
               options={[['any','Any'],['bullish','Bullish Cross'],['bearish','Bearish Cross']]}
-              cardBg={cardBg} borderC={borderC} textC={textC} />
+              cardBg={cardBg} borderC={borderC} textC={textC} accentC={accentC} dark={dark} />
           </FilterSection>
+
+          <div style={{ height: '80px' }} />
         </div>
 
         {/* Scan + Reset buttons */}
-        <div style={{ padding: '12px 16px', borderTop: `1px solid ${borderC}`, display: 'flex', gap: '8px' }}>
+        <div style={{ padding: '12px 14px', borderTop: `1px solid ${borderC}`, display: 'flex', gap: '7px', background: sidebarBg }}>
           <button onClick={runScan} disabled={scanning} style={{
             flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-            padding: '10px', borderRadius: '8px', border: 'none',
-            background: scanning ? `${accentC}88` : accentC,
-            color: '#fff', fontWeight: 700, fontSize: '13px', cursor: scanning ? 'wait' : 'pointer',
-            transition: 'all 0.15s',
+            padding: '10px', borderRadius: '9px', border: 'none',
+            background: scanning
+              ? `${accentC}77`
+              : 'linear-gradient(135deg, #3b82f6, #6366f1)',
+            color: '#fff', fontWeight: 700, fontSize: '13px',
+            cursor: scanning ? 'wait' : 'pointer',
+            transition: 'opacity 0.15s',
+            boxShadow: scanning ? 'none' : '0 2px 12px rgba(99,102,241,0.35)',
           }}>
-            {scanning ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />}
-            {scanning ? 'Scanning...' : 'Auto-Scan'}
+            {scanning ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+            {scanning ? `${progress.done}/${progress.total}` : 'Auto-Scan'}
           </button>
-          <button onClick={resetFilters} style={{
-            padding: '10px 14px', borderRadius: '8px', border: `1px solid ${borderC}`,
-            background: cardBg, color: mutedC, cursor: 'pointer', display: 'flex', alignItems: 'center',
-          }}>
-            <RotateCcw size={14} />
+          <button onClick={resetFilters} title="Reset filters" style={{
+            padding: '10px 13px', borderRadius: '9px', border: `1px solid ${borderC}`,
+            background: 'transparent', color: mutedC, cursor: 'pointer',
+            display: 'flex', alignItems: 'center', transition: 'all 0.15s',
+          }}
+            onMouseEnter={e => { e.currentTarget.style.color = textC; e.currentTarget.style.borderColor = accentC; }}
+            onMouseLeave={e => { e.currentTarget.style.color = mutedC; e.currentTarget.style.borderColor = borderC; }}
+          >
+            <RotateCcw size={13} />
           </button>
         </div>
       </div>
@@ -685,46 +903,76 @@ export default function Screener() {
 
         {/* Top bar */}
         <div style={{
-          padding: '12px 20px', borderBottom: `1px solid ${borderC}`,
+          padding: '10px 18px', borderBottom: `1px solid ${borderC}`,
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          background: dark ? '#0b1120' : '#f1f5f9',
+          background: topBarBg,
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <button onClick={() => setSidebarOpen(p => !p)} style={{
-              background: 'none', border: `1px solid ${borderC}`, borderRadius: '6px',
-              padding: '6px 8px', cursor: 'pointer', color: mutedC, display: 'flex', alignItems: 'center',
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <button onClick={() => setSidebarOpen(p => !p)} title="Toggle filters" style={{
+              background: sidebarOpen ? `${accentC}18` : 'transparent',
+              border: `1px solid ${sidebarOpen ? accentC + '44' : borderC}`,
+              borderRadius: '7px', padding: '5px 7px', cursor: 'pointer',
+              color: sidebarOpen ? accentC : mutedC, display: 'flex', alignItems: 'center',
+              transition: 'all 0.15s',
             }}>
-              <Filter size={14} />
+              <Filter size={13} />
             </button>
-            <span style={{ fontWeight: 700, fontSize: '16px' }}>
-              <Sparkles size={16} style={{ display: 'inline', marginRight: '6px', color: accentC }} />
-              {isCrypto ? 'Crypto' : 'Stock'} Technical Screener
-            </span>
+            {/* Screener / Scanner toggle */}
+            <div style={{
+              display: 'flex', borderRadius: '8px', padding: '2px',
+              background: dark ? 'hsl(217,33%,12%)' : '#e2e8f0',
+              border: `1px solid ${borderC}`,
+            }}>
+              {[{ label: 'Screener', path: '/screener' }, { label: 'Scanner', path: '/scanner' }].map(t => (
+                <button key={t.label} onClick={() => navigate(t.path)} style={{
+                  padding: '4px 12px', borderRadius: '6px', border: 'none', cursor: 'pointer',
+                  fontSize: '12px', fontWeight: 600, transition: 'all 0.15s',
+                  background: t.label === 'Screener' ? (dark ? accentC : '#fff') : 'transparent',
+                  color: t.label === 'Screener' ? (dark ? '#fff' : accentC) : mutedC,
+                  boxShadow: t.label === 'Screener' ? '0 1px 4px rgba(0,0,0,0.2)' : 'none',
+                }}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
             {!isCrypto && (
               <span style={{
-                fontSize: '10px', padding: '2px 8px', borderRadius: '4px',
-                background: '#f59e0b22', color: '#f59e0b', border: '1px solid #f59e0b44',
-                fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px',
+                fontSize: '10px', padding: '2px 7px', borderRadius: '20px',
+                background: '#f59e0b18', color: '#f59e0b',
+                border: '1px solid #f59e0b33', fontWeight: 600, letterSpacing: '0.4px',
               }}>
-                Placeholder Data
+                DEMO
               </span>
             )}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '13px', color: mutedC }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
             {scanning && (
-              <span>Scanning {progress.done}/{progress.total}...</span>
+              <span style={{
+                display: 'flex', alignItems: 'center', gap: '5px',
+                color: accentC, fontWeight: 500,
+              }}>
+                <Loader2 size={12} className="animate-spin" />
+                Scanning {progress.done}/{progress.total}
+              </span>
             )}
             {!scanning && results.length > 0 && (
-              <span>{results.length} result{results.length !== 1 ? 's' : ''} found</span>
+              <span style={{
+                padding: '3px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: 600,
+                background: `${accentC}18`, color: accentC, border: `1px solid ${accentC}33`,
+              }}>
+                {results.length} result{results.length !== 1 ? 's' : ''}
+              </span>
             )}
           </div>
         </div>
 
         {/* Progress bar */}
         {scanning && (
-          <div style={{ height: '3px', background: borderC }}>
+          <div style={{ height: '2px', background: dark ? 'hsl(217,33%,14%)' : '#e2e8f0' }}>
             <div style={{
-              height: '100%', background: accentC, transition: 'width 0.3s',
+              height: '100%',
+              background: 'linear-gradient(90deg, #3b82f6, #6366f1)',
+              transition: 'width 0.3s',
               width: progress.total > 0 ? `${(progress.done / progress.total) * 100}%` : '0%',
             }} />
           </div>
@@ -732,145 +980,152 @@ export default function Screener() {
 
         {/* Error */}
         {error && (
-          <div style={{ padding: '12px 20px', background: '#ef444420', color: '#ef4444', fontSize: '13px', borderBottom: `1px solid #ef444444` }}>
-            Error: {error}
+          <div style={{
+            padding: '10px 18px', fontSize: '12px', fontWeight: 500,
+            background: '#ef444415', color: '#ef4444',
+            borderBottom: `1px solid #ef444430`,
+            display: 'flex', alignItems: 'center', gap: '6px',
+          }}>
+            <span style={{ fontWeight: 700 }}>Error:</span> {error}
           </div>
         )}
 
         {/* Results table */}
         <div style={{ flex: 1, overflow: 'auto' }}>
           {results.length === 0 && !scanning ? (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: mutedC, gap: '12px' }}>
-              <BarChart3 size={48} strokeWidth={1} />
-              <div style={{ fontSize: '15px', fontWeight: 600 }}>
-                {isCrypto
-                  ? 'Set your filters and click Auto-Scan'
-                  : 'Configure filters and scan stocks'}
+            <div style={{
+              display: 'flex', flexDirection: 'column', alignItems: 'center',
+              justifyContent: 'center', height: '100%', color: mutedC, gap: '10px',
+            }}>
+              <div style={{
+                width: '56px', height: '56px', borderRadius: '16px',
+                background: dark ? 'hsl(217,33%,12%)' : '#e2e8f0',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                border: `1px solid ${borderC}`,
+              }}>
+                <BarChart3 size={28} strokeWidth={1.5} color={mutedC} />
               </div>
-              <div style={{ fontSize: '12px' }}>
+              <div style={{ fontSize: '14px', fontWeight: 600, color: textC }}>
+                {isCrypto ? 'Set filters and run Auto-Scan' : 'Configure filters and scan stocks'}
+              </div>
+              <div style={{ fontSize: '12px', color: mutedC, maxWidth: '320px', textAlign: 'center', lineHeight: 1.5 }}>
                 {isCrypto
-                  ? 'Fetches klines for the top 50 USDT pairs by volume from Binance'
-                  : `Screens ${STOCK_TICKERS.length} predefined stock tickers with placeholder data`}
+                  ? 'Scans top 50 USDT pairs by volume via Binance API with live kline data'
+                  : `Screens ${STOCK_TICKERS.length} tickers using technical indicator simulation`}
               </div>
             </div>
           ) : (
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
               <thead>
-                <tr style={{ position: 'sticky', top: 0, background: dark ? '#0b1120' : '#f1f5f9', zIndex: 2 }}>
-                  {/* action col */}
-                  <th style={{ width: '40px', padding: '10px 8px', borderBottom: `1px solid ${borderC}` }} />
+                <tr style={{ position: 'sticky', top: 0, background: topBarBg, zIndex: 2 }}>
+                  <th style={{ width: '36px', padding: '9px 8px', borderBottom: `1px solid ${borderC}` }} />
                   {columns.map(col => (
-                    <th key={col.key}
-                      onClick={() => handleSort(col.key)}
-                      style={{
-                        padding: '10px 8px', textAlign: 'left', cursor: 'pointer',
-                        borderBottom: `1px solid ${borderC}`, fontWeight: 600,
-                        color: sortCol === col.key ? accentC : mutedC,
-                        fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.5px',
-                        width: col.w, whiteSpace: 'nowrap', userSelect: 'none',
-                      }}
-                    >
+                    <th key={col.key} onClick={() => handleSort(col.key)} style={{
+                      padding: '9px 10px', textAlign: 'left', cursor: 'pointer',
+                      borderBottom: `1px solid ${borderC}`, fontWeight: 600,
+                      color: sortCol === col.key ? accentC : mutedC,
+                      fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.7px',
+                      width: col.w, whiteSpace: 'nowrap', userSelect: 'none',
+                    }}>
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
                         {col.label}
-                        {sortCol === col.key && (sortDir === 'asc' ? <ChevronUp size={11} /> : <ChevronDown size={11} />)}
+                        {sortCol === col.key
+                          ? (sortDir === 'asc' ? <ChevronUp size={10} /> : <ChevronDown size={10} />)
+                          : <ArrowUpDown size={9} style={{ opacity: 0.3 }} />}
                       </span>
                     </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {sortedResults.map((row, idx) => (
-                  <tr key={row.symbol} style={{
-                    background: idx % 2 === 0 ? 'transparent' : (dark ? '#1e293b22' : '#f8fafc'),
-                    transition: 'background 0.1s',
-                  }}
-                    onMouseEnter={e => { e.currentTarget.style.background = dark ? '#1e293b55' : '#e2e8f0'; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = idx % 2 === 0 ? 'transparent' : (dark ? '#1e293b22' : '#f8fafc'); }}
+                {sortedResultsWithDist.map((row, idx) => (
+                  <tr key={row.symbol}
+                    style={{ transition: 'background 0.1s', borderBottom: `1px solid ${borderC}22` }}
+                    onMouseEnter={e => { e.currentTarget.style.background = rowHoverBg; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
                   >
                     {/* Eye button */}
-                    <td style={{ padding: '8px', textAlign: 'center', borderBottom: `1px solid ${borderC}22` }}>
+                    <td style={{ padding: '7px 6px 7px 10px', textAlign: 'center' }}>
                       <button onClick={() => openTerminal(row)} style={{
                         background: 'none', border: 'none', cursor: 'pointer', color: mutedC,
-                        padding: '4px', borderRadius: '4px', display: 'flex', alignItems: 'center',
+                        padding: '4px', borderRadius: '5px', display: 'flex', alignItems: 'center',
+                        transition: 'color 0.1s',
                       }}
                         onMouseEnter={e => { e.currentTarget.style.color = accentC; }}
                         onMouseLeave={e => { e.currentTarget.style.color = mutedC; }}
                       >
-                        <Eye size={15} />
+                        <Eye size={14} />
                       </button>
                     </td>
 
                     {/* Symbol */}
-                    <td style={{ padding: '8px', fontWeight: 700, borderBottom: `1px solid ${borderC}22`, color: textC }}>
+                    <td style={{ padding: '7px 10px', fontWeight: 700, fontSize: '13px', color: textC }}>
                       {isCrypto ? (
-                        <>
+                        <span>
                           {row.symbol.replace('USDT', '')}
-                          <span style={{ color: mutedC, fontWeight: 400, fontSize: '11px' }}>/USDT</span>
-                        </>
-                      ) : (
-                        row.symbol
-                      )}
+                          <span style={{ color: mutedC, fontWeight: 400, fontSize: '10px' }}>/USDT</span>
+                        </span>
+                      ) : row.symbol}
                     </td>
 
                     {/* Price */}
-                    <td style={{ padding: '8px', fontFamily: 'monospace', borderBottom: `1px solid ${borderC}22` }}>
+                    <td style={{ padding: '7px 10px', fontFamily: 'monospace', fontSize: '12px', color: textC }}>
                       {isCrypto ? fmtPrice(row.price) : fmtStockPrice(row.price)}
                     </td>
 
                     {/* 24h % */}
-                    <td style={{
-                      padding: '8px', fontWeight: 600, fontFamily: 'monospace',
-                      color: row.priceChange24h > 0 ? '#22c55e' : row.priceChange24h < 0 ? '#ef4444' : mutedC,
-                      borderBottom: `1px solid ${borderC}22`,
-                    }}>
-                      {fmtPct(row.priceChange24h)}
+                    <td style={{ padding: '7px 10px', fontFamily: 'monospace', fontWeight: 600 }}>
+                      <span style={{
+                        color: row.priceChange24h > 0 ? '#22c55e' : row.priceChange24h < 0 ? '#ef4444' : mutedC,
+                      }}>
+                        {fmtPct(row.priceChange24h)}
+                      </span>
                     </td>
 
                     {/* RSI */}
-                    <td style={{
-                      padding: '8px', fontFamily: 'monospace', fontWeight: 600,
-                      color: row.rsi != null ? (row.rsi < 30 ? '#22c55e' : row.rsi > 70 ? '#ef4444' : mutedC) : mutedC,
-                      borderBottom: `1px solid ${borderC}22`,
-                    }}>
-                      {row.rsi != null ? row.rsi.toFixed(1) : '\u2014'}
+                    <td style={{ padding: '7px 10px', fontFamily: 'monospace', fontWeight: 600 }}>
+                      <span style={{
+                        color: row.rsi != null
+                          ? (row.rsi < 30 ? '#22c55e' : row.rsi > 70 ? '#ef4444' : mutedC)
+                          : mutedC,
+                      }}>
+                        {row.rsi != null ? row.rsi.toFixed(1) : '—'}
+                      </span>
                     </td>
 
                     {/* Signal Status */}
-                    <td style={{ padding: '8px', borderBottom: `1px solid ${borderC}22` }}>
+                    <td style={{ padding: '7px 10px' }}>
                       <SignalStatusBadge status={row.signalStatus} />
                     </td>
 
-                    {/* EMA20 Signal */}
-                    <td style={{ padding: '8px', borderBottom: `1px solid ${borderC}22` }}>
-                      <SignalBadge value={row.ema20Signal} />
+                    {/* Δ MA21 */}
+                    <td style={{ padding: '7px 10px', fontFamily: 'monospace', fontSize: '11px', fontWeight: 600 }}>
+                      <DistBadge val={row.dist21} />
                     </td>
-
-                    {/* EMA50 Signal */}
-                    <td style={{ padding: '8px', borderBottom: `1px solid ${borderC}22` }}>
-                      <SignalBadge value={row.ema50Signal} />
+                    {/* Δ MA50 */}
+                    <td style={{ padding: '7px 10px', fontFamily: 'monospace', fontSize: '11px', fontWeight: 600 }}>
+                      <DistBadge val={row.dist50} />
+                    </td>
+                    {/* Δ MA200 */}
+                    <td style={{ padding: '7px 10px', fontFamily: 'monospace', fontSize: '11px', fontWeight: 600 }}>
+                      <DistBadge val={row.dist200} />
                     </td>
 
                     {/* EMA Cross */}
-                    <td style={{ padding: '8px', borderBottom: `1px solid ${borderC}22` }}>
-                      <MACDBadge cross={row.emaCross} />
-                    </td>
+                    <td style={{ padding: '7px 10px' }}><MACDBadge cross={row.emaCross} /></td>
 
                     {/* Volume Change */}
-                    <td style={{
-                      padding: '8px', fontFamily: 'monospace', fontSize: '12px',
-                      color: row.volumeChange > 100 ? '#f59e0b' : mutedC,
-                      borderBottom: `1px solid ${borderC}22`,
-                    }}>
-                      {fmtPct(row.volumeChange)}
+                    <td style={{ padding: '7px 10px', fontFamily: 'monospace', fontSize: '11px' }}>
+                      <span style={{ color: row.volumeChange > 100 ? '#f59e0b' : mutedC }}>
+                        {fmtPct(row.volumeChange)}
+                      </span>
                     </td>
 
                     {/* MACD */}
-                    <td style={{ padding: '8px', borderBottom: `1px solid ${borderC}22` }}>
-                      <MACDBadge cross={row.macdCross} />
-                    </td>
+                    <td style={{ padding: '7px 10px' }}><MACDBadge cross={row.macdCross} /></td>
 
                     {/* Volume 24h */}
-                    <td style={{ padding: '8px', fontFamily: 'monospace', fontSize: '12px', color: mutedC, borderBottom: `1px solid ${borderC}22` }}>
+                    <td style={{ padding: '7px 10px', fontFamily: 'monospace', fontSize: '11px', color: mutedC }}>
                       {fmtVol(row.quoteVolume)}
                     </td>
                   </tr>
@@ -900,24 +1155,23 @@ export default function Screener() {
 
 function FilterSection({ label, children, mutedC, borderC, cardBg, enabled, onToggle, accentC }) {
   return (
-    <div style={{ marginBottom: '16px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-        <div style={{ fontSize: '11px', textTransform: 'uppercase', color: mutedC, fontWeight: 600, letterSpacing: '0.5px' }}>
+    <div style={{ marginBottom: '13px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '5px' }}>
+        <div style={{ fontSize: '10px', textTransform: 'uppercase', color: mutedC, fontWeight: 700, letterSpacing: '0.7px' }}>
           {label}
         </div>
         {onToggle && (
           <button onClick={onToggle} style={{
             background: 'none', border: 'none', cursor: 'pointer', padding: '0',
             color: enabled ? (accentC || '#3b82f6') : mutedC, display: 'flex', alignItems: 'center',
+            transition: 'color 0.15s',
           }}>
-            {enabled ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}
+            {enabled ? <ToggleRight size={17} /> : <ToggleLeft size={17} />}
           </button>
         )}
       </div>
       <div style={{
-        padding: '10px', borderRadius: '8px', border: `1px solid ${borderC}`,
-        background: cardBg,
-        opacity: onToggle && !enabled ? 0.5 : 1,
+        opacity: onToggle && !enabled ? 0.4 : 1,
         pointerEvents: onToggle && !enabled ? 'none' : 'auto',
         transition: 'opacity 0.15s',
       }}>
@@ -927,12 +1181,15 @@ function FilterSection({ label, children, mutedC, borderC, cardBg, enabled, onTo
   );
 }
 
-function SelectFilter({ value, onChange, options, cardBg, borderC, textC }) {
+function SelectFilter({ value, onChange, options, cardBg, borderC, textC, accentC, dark }) {
   return (
     <select value={value} onChange={e => onChange(e.target.value)} style={{
-      width: '100%', padding: '6px 8px', borderRadius: '6px',
+      width: '100%', padding: '6px 9px', borderRadius: '7px',
       border: `1px solid ${borderC}`, background: cardBg, color: textC,
       fontSize: '12px', cursor: 'pointer', outline: 'none',
+      appearance: 'none', backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`,
+      backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center',
+      paddingRight: '28px',
     }}>
       {options.map(([val, label]) => (
         <option key={val} value={val}>{label}</option>
@@ -942,34 +1199,34 @@ function SelectFilter({ value, onChange, options, cardBg, borderC, textC }) {
 }
 
 function SignalBadge({ value }) {
-  if (!value) return <span style={{ color: '#64748b' }}>{'\u2014'}</span>;
+  if (!value) return <span style={{ color: '#475569', fontSize: '11px' }}>—</span>;
   const isAbove = value === 'above';
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center', gap: '3px',
-      padding: '2px 7px', borderRadius: '4px', fontSize: '11px', fontWeight: 600,
-      background: isAbove ? '#22c55e18' : '#ef444418',
-      color: isAbove ? '#22c55e' : '#ef4444',
-      border: `1px solid ${isAbove ? '#22c55e33' : '#ef444433'}`,
+      padding: '2px 8px', borderRadius: '20px', fontSize: '11px', fontWeight: 600,
+      background: isAbove ? '#22c55e15' : '#ef444415',
+      color: isAbove ? '#4ade80' : '#f87171',
+      border: `1px solid ${isAbove ? '#22c55e30' : '#ef444430'}`,
     }}>
-      {isAbove ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
+      {isAbove ? <TrendingUp size={9} /> : <TrendingDown size={9} />}
       {isAbove ? 'Above' : 'Below'}
     </span>
   );
 }
 
 function MACDBadge({ cross }) {
-  if (!cross || cross === 'none') return <span style={{ color: '#64748b', fontSize: '11px' }}>Neutral</span>;
+  if (!cross || cross === 'none') return <span style={{ color: '#475569', fontSize: '11px' }}>—</span>;
   const bull = cross === 'bullish';
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center', gap: '3px',
-      padding: '2px 7px', borderRadius: '4px', fontSize: '11px', fontWeight: 600,
-      background: bull ? '#22c55e18' : '#ef444418',
-      color: bull ? '#22c55e' : '#ef4444',
-      border: `1px solid ${bull ? '#22c55e33' : '#ef444433'}`,
+      padding: '2px 8px', borderRadius: '20px', fontSize: '11px', fontWeight: 600,
+      background: bull ? '#22c55e15' : '#ef444415',
+      color: bull ? '#4ade80' : '#f87171',
+      border: `1px solid ${bull ? '#22c55e30' : '#ef444430'}`,
     }}>
-      {bull ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
+      {bull ? <TrendingUp size={9} /> : <TrendingDown size={9} />}
       {bull ? 'Bullish' : 'Bearish'}
     </span>
   );
@@ -977,21 +1234,40 @@ function MACDBadge({ cross }) {
 
 function SignalStatusBadge({ status }) {
   const config = {
-    strong_buy:  { label: 'Strong Buy',  bg: '#22c55e25', color: '#22c55e', border: '#22c55e44' },
-    buy:         { label: 'Buy',         bg: '#22c55e15', color: '#4ade80', border: '#4ade8033' },
-    neutral:     { label: 'Neutral',     bg: '#64748b15', color: '#94a3b8', border: '#94a3b833' },
-    sell:        { label: 'Sell',        bg: '#ef444415', color: '#f87171', border: '#f8717133' },
-    strong_sell: { label: 'Strong Sell', bg: '#ef444425', color: '#ef4444', border: '#ef444444' },
+    strong_buy:  { label: 'Strong Buy',  bg: '#22c55e22', color: '#4ade80', border: '#22c55e40', dot: '#22c55e' },
+    buy:         { label: 'Buy',         bg: '#22c55e12', color: '#86efac', border: '#22c55e28', dot: '#4ade80' },
+    neutral:     { label: 'Neutral',     bg: '#64748b12', color: '#94a3b8', border: '#64748b28', dot: '#64748b' },
+    sell:        { label: 'Sell',        bg: '#ef444412', color: '#fca5a5', border: '#ef444428', dot: '#f87171' },
+    strong_sell: { label: 'Strong Sell', bg: '#ef444422', color: '#f87171', border: '#ef444440', dot: '#ef4444' },
   };
   const c = config[status] || config.neutral;
   return (
     <span style={{
-      display: 'inline-flex', alignItems: 'center', gap: '3px',
-      padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700,
+      display: 'inline-flex', alignItems: 'center', gap: '5px',
+      padding: '3px 9px', borderRadius: '20px', fontSize: '11px', fontWeight: 600,
       background: c.bg, color: c.color, border: `1px solid ${c.border}`,
-      letterSpacing: '0.3px',
     }}>
+      <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: c.dot, flexShrink: 0 }} />
       {c.label}
+    </span>
+  );
+}
+
+function DistBadge({ val }) {
+  if (val == null) return <span style={{ color: '#475569' }}>—</span>;
+  const pct = Math.round(val * 100) / 100;
+  const abs = Math.abs(pct);
+  const bull = pct >= 0;
+  const intense = abs > 10;
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center',
+      padding: '2px 7px', borderRadius: '20px', fontSize: '11px', fontWeight: 600,
+      background: bull ? (intense ? '#22c55e25' : '#22c55e12') : (intense ? '#ef444425' : '#ef444412'),
+      color: bull ? '#4ade80' : '#f87171',
+      border: `1px solid ${bull ? '#22c55e30' : '#ef444430'}`,
+    }}>
+      {bull ? '+' : ''}{pct.toFixed(2)}%
     </span>
   );
 }

@@ -96,6 +96,39 @@ function NavBar() {
         </Link>
       </div>
 
+      <div
+        className="flex items-center overflow-hidden rounded-2xl"
+        style={{
+          border: `1px solid ${theme === 'light' ? 'rgba(148,163,184,0.28)' : 'rgba(148,163,184,0.12)'}`,
+          background: theme === 'light' ? 'rgba(255,255,255,0.82)' : 'rgba(20,30,55,0.5)',
+          boxShadow: theme === 'light' ? '0 2px 12px rgba(100,116,139,0.10)' : '0 10px 25px rgba(2,6,23,0.18)',
+        }}
+      >
+        <Link
+          to={createPageUrl('Scanner')}
+          className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-all ${
+            isActive('Scanner')
+              ? 'bg-orange-500/20 text-orange-300'
+              : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
+          }`}
+        >
+          <SlidersHorizontal className="h-3.5 w-3.5" />
+          Scanner
+        </Link>
+        <div style={{ width: '1px', height: '18px', background: theme === 'light' ? 'rgba(148,163,184,0.28)' : 'rgba(148,163,184,0.12)' }} />
+        <Link
+          to={createPageUrl('Screener')}
+          className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-all ${
+            isActive('Screener')
+              ? 'bg-indigo-500/20 text-indigo-300'
+              : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
+          }`}
+        >
+          <Scan className="h-3.5 w-3.5" />
+          Screener
+        </Link>
+      </div>
+
       <Link
         to={createPageUrl('Signals')}
         className={`flex items-center gap-1.5 rounded-2xl px-3 py-2 text-xs font-medium transition-all ring-1 ${
@@ -108,17 +141,6 @@ function NavBar() {
         Signals
       </Link>
 
-      <Link
-        to={createPageUrl('Scanner')}
-        className={`flex items-center gap-1.5 rounded-2xl px-3 py-2 text-xs font-medium transition-all ring-1 ${
-          isActive('Scanner')
-            ? 'bg-orange-500/15 text-orange-300 ring-orange-500/40'
-            : 'ring-transparent text-slate-400 hover:text-slate-200 hover:bg-white/5'
-        }`}
-      >
-        <Scan className="h-3.5 w-3.5" />
-        Scanner
-      </Link>
 
       <Link
         to={createPageUrl('Memes')}
@@ -166,18 +188,6 @@ function NavBar() {
       >
         <Eye className="h-3.5 w-3.5" />
         Insiders
-      </Link>
-
-      <Link
-        to={createPageUrl('Screener')}
-        className={`flex items-center gap-1.5 rounded-2xl px-3 py-2 text-xs font-medium transition-all ring-1 ${
-          isActive('Screener')
-            ? 'bg-indigo-500/15 text-indigo-300 ring-indigo-500/40'
-            : 'ring-transparent text-slate-400 hover:text-slate-200 hover:bg-white/5'
-        }`}
-      >
-        <SlidersHorizontal className="h-3.5 w-3.5" />
-        Screener
       </Link>
 
       <Link
