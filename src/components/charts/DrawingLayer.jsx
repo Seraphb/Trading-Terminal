@@ -24,14 +24,26 @@ function getCoordHelpers(width, height, priceMin, priceMax, priceAxisPan, priceZ
 
   const priceToY = (price) => PRICE_CHART_MARGIN.top + plotH * (1 - (price - adjMin) / range);
   const yToPrice = (y) => adjMin + (1 - (y - PRICE_CHART_MARGIN.top) / plotH) * range;
-  const indexToX = (i) =>
-    chartData.length > 0 ? (i + 0.5) * (plotW / chartData.length) : 0;
-  const xToIndex = (x) =>
-    chartData.length > 0
-      ? Math.max(0, Math.min(chartData.length - 1, x / (plotW / chartData.length) - 0.5))
-      : 0;
 
-  return { plotW, plotH, priceToY, yToPrice, indexToX, xToIndex };
+  // Time-based X helpers — store timestamps so drawings follow the chart when panned/zoomed
+  const candleCount = chartData.length || 1;
+  const candleW = plotW / candleCount;
+  const firstTime = chartData.length > 0 ? chartData[0].time : 0;
+  const dt = chartData.length > 1 ? chartData[1].time - chartData[0].time : 60000;
+
+  // Convert absolute timestamp → X pixel (extrapolates outside visible range)
+  const timestampToX = (ts) => {
+    const floatIdx = dt > 0 ? (ts - firstTime) / dt : 0;
+    return (floatIdx + 0.5) * candleW;
+  };
+
+  // Convert X pixel → absolute timestamp
+  const xToTimestamp = (x) => {
+    const floatIdx = x / candleW - 0.5;
+    return firstTime + floatIdx * dt;
+  };
+
+  return { plotW, plotH, priceToY, yToPrice, timestampToX, xToTimestamp };
 }
 
 function getCursorForTool(tool) {
@@ -49,19 +61,9 @@ function renderHline(d, helpers, activeTool, onRemove) {
       onClick={activeTool === 'cursor' ? () => onRemove(d.id) : undefined}
       style={{ cursor: activeTool === 'cursor' ? 'pointer' : 'default' }}
     >
-      <line
-        x1={0}
-        x2={plotW}
-        y1={y}
-        y2={y}
-        stroke={color}
-        strokeWidth={1.5}
-      />
+      <line x1={0} x2={plotW} y1={y} y2={y} stroke={color} strokeWidth={1.5} />
       <text
-        x={plotW + 4}
-        y={y + 4}
-        fill={color}
-        fontSize={10}
+        x={plotW + 4} y={y + 4} fill={color} fontSize={10}
         fontFamily="'JetBrains Mono', monospace"
       >
         {d.price?.toFixed(2)}
@@ -71,21 +73,17 @@ function renderHline(d, helpers, activeTool, onRemove) {
 }
 
 function renderTrendline(d, helpers, activeTool, onRemove, dashed) {
-  const { priceToY, indexToX } = helpers;
-  const x1 = indexToX(d.p1.idx);
+  const { priceToY, timestampToX } = helpers;
+  const x1 = timestampToX(d.p1.ts);
   const y1 = priceToY(d.p1.price);
-  const x2 = indexToX(d.p2.idx);
+  const x2 = timestampToX(d.p2.ts);
   const y2 = priceToY(d.p2.price);
   const color = d.color || DEFAULT_COLOR;
   return (
     <line
       key={d.id}
-      x1={x1}
-      y1={y1}
-      x2={x2}
-      y2={y2}
-      stroke={color}
-      strokeWidth={1.5}
+      x1={x1} y1={y1} x2={x2} y2={y2}
+      stroke={color} strokeWidth={1.5}
       strokeDasharray={dashed ? '5,3' : undefined}
       opacity={dashed ? 0.6 : 1}
       onClick={activeTool === 'cursor' ? () => onRemove(d.id) : undefined}
@@ -95,36 +93,25 @@ function renderTrendline(d, helpers, activeTool, onRemove, dashed) {
 }
 
 function renderRay(d, helpers, activeTool, onRemove, dashed) {
-  const { priceToY, indexToX, plotW, plotH } = helpers;
-  const x1 = indexToX(d.p1.idx);
+  const { priceToY, timestampToX, plotW } = helpers;
+  const x1 = timestampToX(d.p1.ts);
   const y1 = priceToY(d.p1.price);
-  const x2 = indexToX(d.p2.idx);
+  const x2 = timestampToX(d.p2.ts);
   const y2 = priceToY(d.p2.price);
   const color = d.color || DEFAULT_COLOR;
 
-  // Extend the ray from p1 through p2 to the edge
-  let rx2 = x2;
-  let ry2 = y2;
+  let rx2 = x2, ry2 = y2;
   if (x2 !== x1) {
     const slope = (y2 - y1) / (x2 - x1);
-    if (x2 > x1) {
-      rx2 = plotW;
-      ry2 = y1 + slope * (plotW - x1);
-    } else {
-      rx2 = 0;
-      ry2 = y1 + slope * (0 - x1);
-    }
+    if (x2 > x1) { rx2 = plotW; ry2 = y1 + slope * (plotW - x1); }
+    else          { rx2 = 0;    ry2 = y1 + slope * (0 - x1); }
   }
 
   return (
     <line
       key={d.id}
-      x1={x1}
-      y1={y1}
-      x2={rx2}
-      y2={ry2}
-      stroke={color}
-      strokeWidth={1.5}
+      x1={x1} y1={y1} x2={rx2} y2={ry2}
+      stroke={color} strokeWidth={1.5}
       strokeDasharray={dashed ? '5,3' : undefined}
       opacity={dashed ? 0.6 : 1}
       onClick={activeTool === 'cursor' ? () => onRemove(d.id) : undefined}
@@ -134,29 +121,22 @@ function renderRay(d, helpers, activeTool, onRemove, dashed) {
 }
 
 function renderRect(d, helpers, activeTool, onRemove, dashed) {
-  const { priceToY, indexToX } = helpers;
-  const x1 = indexToX(d.p1.idx);
+  const { priceToY, timestampToX } = helpers;
+  const x1 = timestampToX(d.p1.ts);
   const y1 = priceToY(d.p1.price);
-  const x2 = indexToX(d.p2.idx);
+  const x2 = timestampToX(d.p2.ts);
   const y2 = priceToY(d.p2.price);
   const color = d.color || DEFAULT_COLOR;
 
-  const rx = Math.min(x1, x2);
-  const ry = Math.min(y1, y2);
-  const rw = Math.abs(x2 - x1);
-  const rh = Math.abs(y2 - y1);
+  const rx = Math.min(x1, x2), ry = Math.min(y1, y2);
+  const rw = Math.abs(x2 - x1), rh = Math.abs(y2 - y1);
 
   return (
     <rect
       key={d.id}
-      x={rx}
-      y={ry}
-      width={rw}
-      height={rh}
-      stroke={color}
-      strokeWidth={1.5}
-      fill={color}
-      fillOpacity={0.07}
+      x={rx} y={ry} width={rw} height={rh}
+      stroke={color} strokeWidth={1.5}
+      fill={color} fillOpacity={0.07}
       strokeDasharray={dashed ? '5,3' : undefined}
       opacity={dashed ? 0.6 : 1}
       onClick={activeTool === 'cursor' ? () => onRemove(d.id) : undefined}
@@ -166,13 +146,13 @@ function renderRect(d, helpers, activeTool, onRemove, dashed) {
 }
 
 function renderFib(d, helpers, activeTool, onRemove, dashed) {
-  const { priceToY, indexToX, plotW } = helpers;
-  const x1 = indexToX(d.p1.idx);
-  const x2 = indexToX(d.p2.idx);
+  const { priceToY, timestampToX, plotW } = helpers;
+  const x1 = timestampToX(d.p1.ts);
+  const x2 = timestampToX(d.p2.ts);
   const xLeft = Math.min(x1, x2);
   const xRight = Math.max(x1, x2);
   const pHigh = Math.max(d.p1.price, d.p2.price);
-  const pLow = Math.min(d.p1.price, d.p2.price);
+  const pLow  = Math.min(d.p1.price, d.p2.price);
 
   return (
     <g
@@ -187,19 +167,13 @@ function renderFib(d, helpers, activeTool, onRemove, dashed) {
         return (
           <g key={level.label}>
             <line
-              x1={xLeft}
-              x2={xRight || plotW}
-              y1={y}
-              y2={y}
-              stroke={level.color}
-              strokeWidth={1.5}
+              x1={xLeft} x2={xRight || plotW} y1={y} y2={y}
+              stroke={level.color} strokeWidth={1.5}
               strokeDasharray={dashed ? '5,3' : undefined}
             />
             <text
-              x={(xRight || plotW) + 4}
-              y={y + 4}
-              fill={level.color}
-              fontSize={9}
+              x={(xRight || plotW) + 4} y={y + 4}
+              fill={level.color} fontSize={9}
               fontFamily="'JetBrains Mono', monospace"
             >
               {level.label}
@@ -212,17 +186,14 @@ function renderFib(d, helpers, activeTool, onRemove, dashed) {
 }
 
 function renderText(d, helpers, activeTool, onRemove) {
-  const { priceToY, indexToX } = helpers;
-  const x = indexToX(d.idx);
+  const { priceToY, timestampToX } = helpers;
+  const x = timestampToX(d.ts);
   const y = priceToY(d.price);
   const color = d.color || DEFAULT_COLOR;
   return (
     <text
       key={d.id}
-      x={x}
-      y={y}
-      fill={color}
-      fontSize={12}
+      x={x} y={y} fill={color} fontSize={12}
       fontFamily="'JetBrains Mono', monospace"
       onClick={activeTool === 'cursor' ? () => onRemove(d.id) : undefined}
       style={{ cursor: activeTool === 'cursor' ? 'pointer' : 'default', userSelect: 'none' }}
@@ -271,7 +242,7 @@ export default function DrawingLayer({
       x,
       y,
       price: helpers.yToPrice(y),
-      idx: helpers.xToIndex(x),
+      ts: helpers.xToTimestamp(x),   // absolute timestamp — survives pan/zoom
     };
   }, [helpers]);
 
@@ -280,35 +251,22 @@ export default function DrawingLayer({
     const pt = getPoint(e);
 
     if (activeTool === 'hline') {
-      onAddDrawing({
-        id: String(Date.now() + Math.random()),
-        type: 'hline',
-        price: pt.price,
-        color: DEFAULT_COLOR,
-      });
+      onAddDrawing({ id: String(Date.now() + Math.random()), type: 'hline', price: pt.price, color: DEFAULT_COLOR });
       return;
     }
 
     if (activeTool === 'text') {
       const label = window.prompt('Enter label:');
       if (label) {
-        onAddDrawing({
-          id: String(Date.now() + Math.random()),
-          type: 'text',
-          price: pt.price,
-          idx: pt.idx,
-          text: label,
-          color: DEFAULT_COLOR,
-        });
+        onAddDrawing({ id: String(Date.now() + Math.random()), type: 'text', price: pt.price, ts: pt.ts, text: label, color: DEFAULT_COLOR });
       }
       return;
     }
 
-    // For trendline, ray, rect, fib: start drag
     setInProgress({
       type: activeTool,
-      p1: { price: pt.price, idx: pt.idx },
-      p2: { price: pt.price, idx: pt.idx },
+      p1: { price: pt.price, ts: pt.ts },
+      p2: { price: pt.price, ts: pt.ts },
       color: DEFAULT_COLOR,
     });
   }, [activeTool, getPoint, onAddDrawing]);
@@ -316,38 +274,24 @@ export default function DrawingLayer({
   const handleMouseMove = useCallback((e) => {
     if (!inProgress) return;
     const pt = getPoint(e);
-    setInProgress((prev) => prev ? { ...prev, p2: { price: pt.price, idx: pt.idx } } : null);
+    setInProgress((prev) => prev ? { ...prev, p2: { price: pt.price, ts: pt.ts } } : null);
   }, [inProgress, getPoint]);
 
   const handleMouseUp = useCallback((e) => {
     if (!inProgress) return;
     const pt = getPoint(e);
-    const final = {
-      ...inProgress,
-      id: String(Date.now() + Math.random()),
-      p2: { price: pt.price, idx: pt.idx },
-    };
-    onAddDrawing(final);
+    onAddDrawing({ ...inProgress, id: String(Date.now() + Math.random()), p2: { price: pt.price, ts: pt.ts } });
     setInProgress(null);
   }, [inProgress, getPoint, onAddDrawing]);
 
   if (!width || !height) return null;
 
   const pointerEvents = activeTool === 'cursor' ? 'none' : 'all';
-  const cursor = getCursorForTool(activeTool);
-
-  // Build in-progress drawing object with temp id for rendering
   const inProgressDrawing = inProgress ? { ...inProgress, id: '__in_progress__' } : null;
 
   return (
     <svg
-      style={{
-        position: 'absolute',
-        inset: 0,
-        pointerEvents,
-        cursor,
-        overflow: 'visible',
-      }}
+      style={{ position: 'absolute', inset: 0, pointerEvents, cursor: getCursorForTool(activeTool), overflow: 'visible' }}
       width={width}
       height={height}
       onMouseDown={handleMouseDown}
