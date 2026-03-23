@@ -1,0 +1,187 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* ── Dark theme (default) — 5% lighter than before ── */
+    --background: 222 47% 10%;
+    --foreground: 210 40% 98%;
+    --card: 222 47% 12%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222 47% 12%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 222 47% 10%;
+    --secondary: 217 33% 22%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217 33% 22%;
+    --muted-foreground: 215 20% 58%;
+    --accent: 217 33% 22%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217 33% 22%;
+    --input: 217 33% 22%;
+    --ring: 217 91% 60%;
+    --radius: 0.5rem;
+
+    /* QT dark tokens */
+    --qt-bg:     hsl(222, 47%, 10%);
+    --qt-panel:  hsl(222, 47%, 12%);
+    --qt-border: hsl(217, 33%, 20%);
+    --qt-text:   hsl(210, 40%, 98%);
+    --qt-muted:  hsl(215, 20%, 58%);
+  }
+}
+
+/* ── Light theme ─────────────────────────────────────────────────────────── */
+[data-qt-theme="light"] {
+  /* Tailwind CSS vars */
+  --background: 216 28% 95%;
+  --foreground: 222 47% 10%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 10%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 47% 10%;
+  --primary: 217 91% 52%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 216 20% 91%;
+  --secondary-foreground: 222 47% 10%;
+  --muted: 216 20% 91%;
+  --muted-foreground: 220 9% 48%;
+  --accent: 216 20% 91%;
+  --accent-foreground: 222 47% 10%;
+  --destructive: 0 84% 52%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 216 18% 86%;
+  --input: 216 18% 86%;
+  --ring: 217 91% 52%;
+
+  /* QT light tokens */
+  --qt-bg:     hsl(216, 28%, 95%);
+  --qt-panel:  hsl(0, 0%, 100%);
+  --qt-border: hsl(216, 18%, 86%);
+  --qt-text:   hsl(222, 47%, 10%);
+  --qt-muted:  hsl(220, 9%, 48%);
+}
+
+/* ── Panel component ────────────────────────────────────────────────────── */
+.terminal-panel {
+  border: 1px solid var(--qt-border);
+  background: var(--qt-panel);
+  border-radius: 6px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+[data-qt-theme="light"] .terminal-panel {
+  background: #ffffff !important;
+  border-color: hsl(216, 18%, 86%) !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.07), 0 0 0 1px rgba(0,0,0,0.04) !important;
+}
+
+/* ── Light: text colour overrides ─────────────────────────────────────── */
+[data-qt-theme="light"] .text-white        { color: hsl(222, 47%, 11%) !important; }
+[data-qt-theme="light"] .text-slate-100    { color: hsl(222, 40%, 18%) !important; }
+[data-qt-theme="light"] .text-slate-200    { color: hsl(222, 30%, 26%) !important; }
+[data-qt-theme="light"] .text-slate-300    { color: hsl(220, 16%, 36%) !important; }
+[data-qt-theme="light"] .text-slate-400    { color: hsl(220, 12%, 46%) !important; }
+[data-qt-theme="light"] .text-slate-500    { color: hsl(220,  9%, 52%) !important; }
+[data-qt-theme="light"] .text-slate-600    { color: hsl(220,  7%, 58%) !important; }
+[data-qt-theme="light"] .text-slate-700    { color: hsl(220,  5%, 44%) !important; }
+[data-qt-theme="light"] .font-mono-data    { color: hsl(222, 47%, 14%); }
+
+/* nav link accent colours in light */
+[data-qt-theme="light"] .text-blue-300    { color: hsl(217, 91%, 42%) !important; }
+[data-qt-theme="light"] .text-emerald-300 { color: hsl(158, 60%, 32%) !important; }
+[data-qt-theme="light"] .text-purple-300  { color: hsl(270, 60%, 42%) !important; }
+[data-qt-theme="light"] .text-orange-300  { color: hsl( 32, 85%, 40%) !important; }
+
+/* ── Light: background overrides ─────────────────────────────────────── */
+/* Panels that use hardcoded dark hsl values */
+[data-qt-theme="light"] [class*="bg-[hsl(222"] {
+  background-color: #ffffff !important;
+}
+[data-qt-theme="light"] [class*="bg-[hsl(217"] {
+  background-color: hsl(216, 22%, 96%) !important;
+}
+
+/* active nav item backgrounds */
+[data-qt-theme="light"] .bg-blue-500\/20    { background-color: rgba(37, 99, 235, 0.10) !important; }
+[data-qt-theme="light"] .bg-emerald-500\/20 { background-color: rgba(5, 150, 105, 0.10) !important; }
+[data-qt-theme="light"] .bg-purple-500\/15  { background-color: rgba(109, 40, 217, 0.08) !important; }
+[data-qt-theme="light"] .bg-orange-500\/15  { background-color: rgba(234, 88, 12, 0.08) !important; }
+
+/* hover states */
+[data-qt-theme="light"] .hover\:bg-white\/5:hover { background-color: hsl(216, 22%, 90%) !important; }
+[data-qt-theme="light"] .hover\:text-slate-200:hover { color: hsl(222, 47%, 14%) !important; }
+
+/* ── Light: border overrides ─────────────────────────────────────────── */
+[data-qt-theme="light"] [class*="border-[hsl(217"],
+[data-qt-theme="light"] [class*="border-[hsl(222"] {
+  border-color: hsl(216, 18%, 86%) !important;
+}
+
+/* ── Light: input / form elements ────────────────────────────────────── */
+[data-qt-theme="light"] input,
+[data-qt-theme="light"] textarea,
+[data-qt-theme="light"] select {
+  background-color: #ffffff !important;
+  color: hsl(222, 47%, 11%) !important;
+  border-color: hsl(216, 18%, 84%) !important;
+}
+[data-qt-theme="light"] input:focus,
+[data-qt-theme="light"] textarea:focus,
+[data-qt-theme="light"] select:focus {
+  border-color: hsl(217, 91%, 52%) !important;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12) !important;
+}
+[data-qt-theme="light"] input::placeholder { color: hsl(220, 9%, 58%) !important; }
+
+/* ── Light: scrollbar ─────────────────────────────────────────────────── */
+[data-qt-theme="light"] ::-webkit-scrollbar-track  { background: hsl(216, 22%, 93%); }
+[data-qt-theme="light"] ::-webkit-scrollbar-thumb  { background: hsl(216, 16%, 72%); }
+[data-qt-theme="light"] ::-webkit-scrollbar-thumb:hover { background: hsl(217, 18%, 60%); }
+
+/* ── Base styles ─────────────────────────────────────────────────────── */
+@layer base {
+  * { @apply border-border; }
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+}
+
+/* ── Scrollbar (dark default) ─────────────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: hsl(222 47% 15%); }
+::-webkit-scrollbar-thumb { background: hsl(217 33% 33%); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: hsl(217 33% 36%); }
+
+/* ── Typography ──────────────────────────────────────────────────────── */
+.font-mono-data {
+  font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Glow effects ─────────────────────────────────────────────────────── */
+.glow-green { text-shadow: 0 0 8px rgba(34, 197,  94, 0.5); }
+.glow-red   { text-shadow: 0 0 8px rgba(239,  68,  68, 0.5); }
+.glow-blue  { text-shadow: 0 0 8px rgba( 59, 130, 246, 0.5); }
+
+/* ── Animations ─────────────────────────────────────────────────────── */
+@keyframes data-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
+.animate-data-pulse { animation: data-pulse 1.5s ease-in-out infinite; }
+
+.heatmap-cell { transition: all 0.15s ease; }
+
+@keyframes ticker-scroll { 0% { transform: translateX(0); } 100% { transform: translateX(-33.333%); } }
+.animate-ticker { animation: ticker-scroll 60s linear infinite; }
+
+@keyframes liq-flash { 0% { background-color: rgba(239,68,68,0.3); } 100% { background-color: transparent; } }
+.animate-liq-flash { animation: liq-flash 2s ease-out; }
+
+.crosshair-cursor { cursor: crosshair; }
+
+@keyframes live-pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.5); opacity: 0.5; } }
+.live-dot { animation: live-pulse 2s ease-in-out infinite; }
