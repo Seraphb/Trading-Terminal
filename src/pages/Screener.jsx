@@ -945,24 +945,6 @@ export default function Screener() {
             }}>
               <Filter size={13} />
             </button>
-            {/* Screener / Scanner toggle */}
-            <div style={{
-              display: 'flex', borderRadius: '8px', padding: '2px',
-              background: dark ? 'hsl(217,33%,12%)' : '#e2e8f0',
-              border: `1px solid ${borderC}`,
-            }}>
-              {[{ label: 'Screener', path: '/screener' }, { label: 'Scanner', path: '/scanner' }].map(t => (
-                <button key={t.label} onClick={() => navigate(t.path)} style={{
-                  padding: '4px 12px', borderRadius: '6px', border: 'none', cursor: 'pointer',
-                  fontSize: '12px', fontWeight: 600, transition: 'all 0.15s',
-                  background: t.label === 'Screener' ? (dark ? accentC : '#fff') : 'transparent',
-                  color: t.label === 'Screener' ? (dark ? '#fff' : accentC) : mutedC,
-                  boxShadow: t.label === 'Screener' ? '0 1px 4px rgba(0,0,0,0.2)' : 'none',
-                }}>
-                  {t.label}
-                </button>
-              ))}
-            </div>
             {!isCrypto && (
               <span style={{
                 fontSize: '10px', padding: '2px 7px', borderRadius: '20px',
