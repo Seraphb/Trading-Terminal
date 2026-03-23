@@ -17,6 +17,7 @@ import { useOpenInterest, useFundingRate } from './useBinanceWS';
 import AlertsWidget from './AlertsWidget';
 
 const VuManChu = lazy(() => import('./VuManChu'));
+const StockVMC = lazy(() => import('../stocks/StockVMC'));
 const WyckoffIndicator = lazy(() => import('./WyckoffIndicator'));
 const FundingRatePanel = lazy(() => import('./FundingRatePanel'));
 const SniperStrategyModal = lazy(() => import('./SniperStrategyModal'));
@@ -34,26 +35,28 @@ function IndicatorFallback() {
 // ── Resize handle between panels ─────────────────────────────────────────────
 // Drag UP = indicator shrinks (chart gets bigger), drag DOWN = indicator grows.
 // Uses capture phase for mouseup to avoid stopPropagation issues from child panels.
-function ResizeHandle({ panelKey, heights, setHeights }) {
+function ResizeHandle({ panelKey, heights, setHeights, panelRef }) {
   const handleMouseDown = (e) => {
     e.preventDefault();
     e.stopPropagation();
     const startY = e.clientY;
-    const startH = heights[panelKey] ?? 220;
+    const startH = heights[panelKey] ?? 200;
+    let currentH = startH;
+
     const onMove = (ev) => {
       ev.preventDefault();
       const delta = ev.clientY - startY;
-      // Positive delta (drag down) = grow indicator, negative (drag up) = shrink
-      setHeights((prev) => ({
-        ...prev,
-        [panelKey]: Math.max(80, Math.min(500, startH - delta)),
-      }));
+      currentH = Math.max(80, Math.min(500, startH - delta));
+      // Direct DOM mutation — zero React re-renders during drag
+      if (panelRef?.current) panelRef.current.style.height = currentH + 'px';
     };
     const onUp = () => {
       window.removeEventListener('mousemove', onMove, true);
       window.removeEventListener('mouseup', onUp, true);
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
+      // Sync to React state once on release
+      setHeights((prev) => ({ ...prev, [panelKey]: currentH }));
     };
     document.body.style.cursor = 'ns-resize';
     document.body.style.userSelect = 'none';
@@ -80,7 +83,8 @@ function formatAxisPrice(value) {
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function PriceChart({ klines, loading, symbol, interval, dateRange, onIntervalChange, onDateRangeChange, onVisibleRangeChange, goldSignalTime = null, goldSignalPrice = null, signals = null, tickers = {} }) {
+export default function PriceChart({ klines, loading, symbol, interval, dateRange, onIntervalChange, onDateRangeChange, onVisibleRangeChange, goldSignalTime = null, goldSignalPrice = null, signals = null, tickers = {}, mode = 'crypto' }) {
+  const isStock = mode === 'stock';
   const { theme } = useTheme();
   const [visibleCount, setVisibleCount] = useState(100);
   const [panOffset, setPanOffset]       = useState(0);
@@ -96,6 +100,7 @@ export default function PriceChart({ klines, loading, symbol, interval, dateRang
   const [watchlistSymbols, setWatchlistSymbols] = useState(() => getTerminalWatchlist());
   const [inspectionGuide, setInspectionGuide] = useState(null);
   const [indicatorHeights, setIndicatorHeights] = useState({});
+  const indicatorRefs = useRef({});
   const [drawingTool, setDrawingTool] = useState('cursor');
   const [drawings, setDrawings] = useState([]);
 
@@ -534,6 +539,7 @@ export default function PriceChart({ klines, loading, symbol, interval, dateRang
   const inWatchlist = watchlistSymbols.includes(normalizedSymbol);
   const availableDateRanges = DATE_RANGES_BY_INTERVAL[interval] || CHART_DATE_RANGES;
   const movingAverageLines = useMemo(() => getMovingAverageLineConfig(movingAverages), [movingAverages]);
+  const klinesWithTimeStr = useMemo(() => klines.map((k, i) => ({ ...k, timeStr: String(i) })), [klines]);
 
   return (
     <div className="terminal-panel flex flex-col h-full" style={{ overflow: 'hidden' }}>
@@ -541,19 +547,23 @@ export default function PriceChart({ klines, loading, symbol, interval, dateRang
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-[hsl(217,33%,20%)] flex-shrink-0">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => toggleTerminalWatchlistSymbol(normalizedSymbol)}
-              className="transition-transform hover:scale-110"
-              title={inWatchlist ? 'Remove from watchlist' : 'Add to watchlist'}
-            >
-              <Star
-                className="w-3.5 h-3.5"
-                fill={inWatchlist ? '#eab308' : 'none'}
-                style={{ color: inWatchlist ? '#eab308' : '#64748b' }}
-              />
-            </button>
-            <h2 className="text-sm font-semibold text-white">{symbol?.replace('USDT', '/USDT')?.toUpperCase()}</h2>
+            {!isStock && (
+              <button
+                type="button"
+                onClick={() => toggleTerminalWatchlistSymbol(normalizedSymbol)}
+                className="transition-transform hover:scale-110"
+                title={inWatchlist ? 'Remove from watchlist' : 'Add to watchlist'}
+              >
+                <Star
+                  className="w-3.5 h-3.5"
+                  fill={inWatchlist ? '#eab308' : 'none'}
+                  style={{ color: inWatchlist ? '#eab308' : '#64748b' }}
+                />
+              </button>
+            )}
+            <h2 className="text-sm font-semibold text-white">
+              {isStock ? symbol?.toUpperCase() : symbol?.replace('USDT', '/USDT')?.toUpperCase()}
+            </h2>
           </div>
           <span className={`font-mono-data text-base font-bold ${isUp ? 'text-emerald-400 glow-green' : 'text-red-400 glow-red'}`}>
             ${formatAssetPrice(lastPrice)}
@@ -575,7 +585,7 @@ export default function PriceChart({ klines, loading, symbol, interval, dateRang
           >
             ⚡ Strategy
           </button>
-          <AlertsWidget tickers={tickers} symbol={symbol?.toUpperCase()} />
+          {!isStock && <AlertsWidget tickers={tickers} symbol={symbol?.toUpperCase()} />}
           <div className="w-px h-4 bg-[hsl(217,33%,25%)] mx-0.5" />
           {CHART_INTERVALS.map(iv => (
             <button key={iv} onClick={() => {
@@ -768,21 +778,27 @@ export default function PriceChart({ klines, loading, symbol, interval, dateRang
         >
           {activeIndicators.map((key) => {
             const h = indicatorHeights[key] ?? 200;
+            if (!indicatorRefs.current[key]) indicatorRefs.current[key] = { current: null };
+            const panelRef = indicatorRefs.current[key];
             return (
               <React.Fragment key={key}>
                 <ResizeHandle
                   panelKey={key}
                   heights={indicatorHeights}
                   setHeights={setIndicatorHeights}
+                  panelRef={panelRef}
                 />
-                <div className="relative flex-shrink-0" style={{ height: h }}>
+                <div ref={el => panelRef.current = el} className="relative flex-shrink-0" style={{ height: h }}>
                   <button
                     onClick={() => setActiveIndicators(prev => prev.filter(k => k !== key))}
                     className="absolute top-0.5 right-14 z-20 text-slate-700 hover:text-red-400 text-[11px] leading-none px-1 transition-colors"
                     title="Remove indicator">✕</button>
                   {key === 'vumanchu' && (
                     <Suspense fallback={<IndicatorFallback />}>
-                      <VuManChu klines={klines} visibleRange={[startIdx, endIdx]} rightPad={rightPad} inspectionX={inspectionGuide?.plotX ?? null} />
+                      {isStock
+                        ? <StockVMC klines={klinesWithTimeStr} visibleRange={[startIdx, endIdx]} rightPad={rightPad} inspectionX={inspectionGuide?.plotX ?? null} />
+                        : <VuManChu klines={klines} visibleRange={[startIdx, endIdx]} rightPad={rightPad} inspectionX={inspectionGuide?.plotX ?? null} />
+                      }
                     </Suspense>
                   )}
                   {key === 'wyckoff' && (
