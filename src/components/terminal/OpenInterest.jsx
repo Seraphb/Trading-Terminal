@@ -134,7 +134,7 @@ export default function OpenInterest({ klines, visibleRange, inspectionX, symbol
           />
         )}
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={visible} margin={{ top: 10, right: 72, bottom: 10, left: 0 }}>
+          <ComposedChart data={visible} margin={{ top: 10, right: 12, bottom: 10, left: 0 }}>
             <CartesianGrid stroke="hsl(217,33%,15%)" strokeDasharray="3 3" />
             <XAxis dataKey="idx" hide />
             <YAxis

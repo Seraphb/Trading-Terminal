@@ -591,6 +591,20 @@ export default function PriceChart({ klines, loading, symbol, interval, dateRang
         </div>
       </div>
 
+      {/* Wrapper for chart + date range + indicators — unified crosshair lives here */}
+      <div style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        {inspectionGuide && (
+          <div style={{
+            position: 'absolute',
+            top: 0, bottom: 0,
+            left: 36 + inspectionGuide.plotX,
+            width: 1,
+            background: 'rgba(148,163,184,0.35)',
+            pointerEvents: 'none',
+            zIndex: 50,
+          }} />
+        )}
+
       {/* Chart canvas */}
       <div className="flex-1 min-h-0 flex" style={{ flex: '1.2 0 0%' }}>
         <DrawingToolbar
@@ -846,6 +860,7 @@ export default function PriceChart({ klines, loading, symbol, interval, dateRang
           </div>
         )}
       </div>
+      </div>{/* end unified crosshair wrapper */}
     </div>
   );
 }

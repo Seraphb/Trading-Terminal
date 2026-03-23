@@ -1,48 +1,158 @@
 import React from 'react';
 import { RefreshCw, TrendingUp, AlertTriangle, CheckCircle, MinusCircle } from 'lucide-react';
-import { base44 } from '@/api/base44Client';
+
+const DEEPSEEK_API_KEY = 'sk-54b1762e290440d59d8ed192c1336cc3';
+
+// Fetch live fundamentals from Yahoo Finance (free, no key needed)
+async function fetchYahooFundamentals(ticker) {
+  const modules = [
+    'financialData',
+    'defaultKeyStatistics',
+    'incomeStatementHistory',
+    'cashflowStatementHistory',
+    'balanceSheetHistory',
+    'summaryDetail',
+    'price',
+  ].join(',');
+
+  // Use a CORS proxy since Yahoo blocks direct browser requests
+  const url = `https://corsproxy.io/?${encodeURIComponent(
+    `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${ticker}?modules=${modules}`
+  )}`;
+
+  const res = await fetch(url);
+  const json = await res.json();
+  const result = json?.quoteSummary?.result?.[0];
+  if (!result) return null;
+
+  const fd = result.financialData || {};
+  const ks = result.defaultKeyStatistics || {};
+  const sd = result.summaryDetail || {};
+  const pr = result.price || {};
+
+  // Pull most recent annual FCF from cashflow history
+  const cfHistory = result.cashflowStatementHistory?.cashflowStatements || [];
+  const fcfValues = cfHistory.map(s =>
+    (s.totalCashFromOperatingActivities?.raw || 0) - (s.capitalExpenditures?.raw || 0)
+  ).filter(v => v !== 0);
+
+  // Income history for revenue & net income
+  const incHistory = result.incomeStatementHistory?.incomeStatements || [];
+  const revenues = incHistory.map(s => s.totalRevenue?.raw).filter(Boolean);
+  const netIncomes = incHistory.map(s => s.netIncome?.raw).filter(Boolean);
+
+  return {
+    company_name: pr.longName || ticker,
+    current_price: pr.regularMarketPrice?.raw || fd.currentPrice?.raw,
+    market_cap: pr.marketCap?.raw,
+    enterprise_value: ks.enterpriseValue?.raw,
+    // Margins & returns
+    gross_margin: fd.grossMargins?.raw,
+    operating_margin: fd.operatingMargins?.raw,
+    profit_margin: fd.profitMargins?.raw,
+    return_on_equity: fd.returnOnEquity?.raw,
+    return_on_assets: fd.returnOnAssets?.raw,
+    // Growth
+    revenue_growth: fd.revenueGrowth?.raw,
+    earnings_growth: fd.earningsGrowth?.raw,
+    // Cash flow
+    free_cashflow: fd.freeCashflow?.raw,
+    operating_cashflow: fd.operatingCashflow?.raw,
+    fcf_history: fcfValues,
+    revenue_history: revenues,
+    net_income_history: netIncomes,
+    // Debt
+    total_debt: fd.totalDebt?.raw,
+    total_cash: fd.totalCash?.raw,
+    debt_to_equity: fd.debtToEquity?.raw,
+    // Valuation multiples
+    pe_ratio: sd.trailingPE?.raw,
+    forward_pe: sd.forwardPE?.raw,
+    pb_ratio: ks.priceToBook?.raw,
+    ps_ratio: ks.priceToSalesTrailing12Months?.raw,
+    ev_to_ebitda: ks.enterpriseToEbitda?.raw,
+    ev_to_revenue: ks.enterpriseToRevenue?.raw,
+    // Other
+    beta: ks.beta?.raw,
+    shares_outstanding: ks.sharesOutstanding?.raw,
+    book_value_per_share: ks.bookValue?.raw,
+    dividend_yield: sd.dividendYield?.raw,
+    payout_ratio: sd.payoutRatio?.raw,
+  };
+}
 
 export default function IntrinsicValueCard({ symbol, fundamentals, dcf, setDcf, dcfLoading, setDcfLoading }) {
   const runDCF = async () => {
     if (!symbol) return;
     setDcfLoading(true);
-    const result = await base44.integrations.Core.InvokeLLM({
-      prompt: `You are a top-tier equity analyst. Perform a rigorous DCF + relative valuation for stock ${symbol}.
-${fundamentals ? `Fundamental data: ${JSON.stringify(fundamentals)}.` : 'Use internet for real fundamental data.'}
-
-Provide:
-1. DCF intrinsic value (base/bull/bear) 
-2. Relative value vs peers
-3. Upside/downside % vs current price
-4. WACC, terminal growth, FCF growth assumptions
-5. Margin of safety
-6. Key risks (3-5 bullet points)
-7. One-paragraph analyst summary
-
-Return ONLY valid JSON.`,
-      add_context_from_internet: !fundamentals,
-      response_json_schema: {
-        type: 'object',
-        properties: {
-          company_name: { type: 'string' },
-          current_price: { type: 'number' },
-          intrinsic_value_base: { type: 'number' },
-          intrinsic_value_bull: { type: 'number' },
-          intrinsic_value_bear: { type: 'number' },
-          relative_value: { type: 'number' },
-          upside_downside_pct: { type: 'number' },
-          wacc: { type: 'number' },
-          terminal_growth: { type: 'number' },
-          fcf_growth_yr1_5: { type: 'number' },
-          verdict: { type: 'string', enum: ['UNDERVALUED', 'FAIRLY_VALUED', 'OVERVALUED'] },
-          margin_of_safety: { type: 'number' },
-          key_risks: { type: 'array', items: { type: 'string' } },
-          summary: { type: 'string' },
-        }
+    try {
+      // 1. Fetch live Yahoo Finance fundamentals
+      let liveFundamentals = null;
+      try {
+        liveFundamentals = await fetchYahooFundamentals(symbol);
+      } catch (e) {
+        console.warn('Yahoo fetch failed, falling back to prop fundamentals:', e);
       }
-    });
-    setDcf(result);
-    setDcfLoading(false);
+
+      const fundData = liveFundamentals || fundamentals || null;
+
+      // 2. Run DeepSeek DCF analysis with real data
+      const res = await fetch('https://api.deepseek.com/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_API_KEY}` },
+        body: JSON.stringify({
+          model: 'deepseek-chat',
+          temperature: 0.3,
+          max_tokens: 900,
+          response_format: { type: 'json_object' },
+          messages: [
+            {
+              role: 'system',
+              content: 'You are a top-tier equity analyst. Perform rigorous DCF valuations using provided data. Always respond with valid JSON only.',
+            },
+            {
+              role: 'user',
+              content: `Perform a rigorous DCF + relative valuation for: ${symbol}
+
+LIVE FUNDAMENTAL DATA (from Yahoo Finance, use these numbers directly):
+${fundData ? JSON.stringify(fundData, null, 2) : 'No live data available — use your best training knowledge.'}
+
+Instructions:
+- Use the live current_price as the market price
+- Build 3 DCF scenarios (bear/base/bull) using FCF history and growth rates
+- Calculate WACC using beta, capital structure, and current risk-free rate (~4.5%)
+- Compare to sector peers using EV/EBITDA, P/E, P/S multiples
+- Margin of safety = (intrinsic_value_base - current_price) / intrinsic_value_base * 100
+
+Return ONLY this JSON:
+{
+  "company_name": string,
+  "current_price": number,
+  "intrinsic_value_base": number,
+  "intrinsic_value_bull": number,
+  "intrinsic_value_bear": number,
+  "relative_value": number,
+  "upside_downside_pct": number,
+  "wacc": number,
+  "terminal_growth": number,
+  "fcf_growth_yr1_5": number,
+  "verdict": "UNDERVALUED" | "FAIRLY_VALUED" | "OVERVALUED",
+  "margin_of_safety": number,
+  "key_risks": [string, string, string],
+  "summary": string
+}`,
+            },
+          ],
+        }),
+      });
+      const data = await res.json();
+      const result = JSON.parse(data.choices[0].message.content);
+      setDcf(result);
+    } catch (err) {
+      console.error('DCF error:', err);
+    } finally {
+      setDcfLoading(false);
+    }
   };
 
   const verdict = dcf?.verdict;

@@ -309,22 +309,9 @@ export default function WyckoffIndicator({ klines, visibleRange, rightPad = 0, i
 
       {/* Chart */}
       <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
-        {inspectionX != null ? (
-          <div
-            aria-hidden="true"
-            style={{
-              position: 'absolute',
-              top: 0,
-              bottom: 0,
-              left: `${inspectionX}px`,
-              borderLeft: '1px dashed rgba(148,163,184,0.45)',
-              pointerEvents: 'none',
-              zIndex: 6,
-            }}
-          />
-        ) : null}
+        {/* crosshair rendered at PriceChart outer level for continuity */}
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={visibleData} margin={{ top: 16, right: 72, bottom: 4, left: 0 }}>
+          <ComposedChart data={visibleData} margin={{ top: 16, right: 0, bottom: 4, left: 0 }}>
             <CartesianGrid vertical={false} stroke="hsl(217,33%,15%)" strokeWidth={0.5} />
             <XAxis dataKey="timeStr" tick={false} axisLine={false} tickLine={false} />
             <YAxis

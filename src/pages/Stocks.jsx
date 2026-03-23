@@ -562,6 +562,24 @@ export default function Stocks() {
     </div>
   );
 
+  const ChartWithCrosshair = (
+    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+      {inspectionGuide && (
+        <div style={{
+          position: 'absolute',
+          top: 0, bottom: 0,
+          left: 36 + inspectionGuide.plotX,
+          width: 1,
+          background: 'rgba(148,163,184,0.35)',
+          pointerEvents: 'none',
+          zIndex: 50,
+        }} />
+      )}
+      {ChartPanel}
+      {VMCPanel}
+    </div>
+  );
+
   return (
     <div className="flex overflow-hidden" data-qt-theme={theme} style={{ background: bg, height: '100%', minHeight: 0 }}>
       {/* Watchlist sidebar */}
@@ -603,9 +621,8 @@ export default function Stocks() {
          {activeTab === 'summary' && (
            <div className="h-full grid grid-cols-12 gap-[3px] p-[3px] min-h-0 overflow-hidden">
              {/* Left: chart + VMC */}
-             <div className="col-span-12 lg:col-span-8 flex flex-col min-h-0 gap-[3px]">
-              {ChartPanel}
-              {VMCPanel}
+             <div className="col-span-12 lg:col-span-8 flex flex-col min-h-0">
+              {ChartWithCrosshair}
              </div>
              {/* Right: AI Signal + DCF */}
              <div className="col-span-12 lg:col-span-4 min-h-0 flex flex-col gap-[3px] overflow-auto">
@@ -629,9 +646,8 @@ export default function Stocks() {
 
         {/* ── CHART tab ── */}
         {activeTab === 'chart' && (
-          <div className="h-full flex flex-col gap-[3px] p-[3px] min-h-0 overflow-hidden">
-            {ChartPanel}
-            {VMCPanel}
+          <div className="h-full flex flex-col p-[3px] min-h-0 overflow-hidden">
+            {ChartWithCrosshair}
           </div>
         )}
 

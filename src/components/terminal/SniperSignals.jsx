@@ -941,7 +941,7 @@ export default function SniperSignals({ klines, visibleRange, rightPad = 0, insp
         )}
 
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={visible} margin={{ top: 72, right: 72, bottom: 14, left: 0 }}>
+          <ComposedChart data={visible} margin={{ top: 72, right: 36, bottom: 14, left: 0 }}>
             <CartesianGrid stroke="hsl(217,33%,12%)" strokeDasharray="3 3" />
             <XAxis dataKey="idx" hide />
             <YAxis

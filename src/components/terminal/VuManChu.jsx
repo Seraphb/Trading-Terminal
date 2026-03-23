@@ -322,18 +322,9 @@ export default function VuManChu({ klines, visibleRange, rightPad = 0, inspectio
         onMouseMove={e => e.stopPropagation()}
         onMouseUp={e => e.stopPropagation()}
       >
-        {inspectionX != null ? (
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-y-0 z-10"
-            style={{
-              left: `${inspectionX}px`,
-              borderLeft: '1px dashed rgba(148,163,184,0.45)',
-            }}
-          />
-        ) : null}
+        {/* crosshair rendered at PriceChart outer level for continuity */}
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={visible} margin={{ top: 20, right: 72, bottom: 20, left: 0 }}>
+          <ComposedChart data={visible} margin={{ top: 20, right: 36, bottom: 20, left: 0 }}>
             <CartesianGrid stroke="hsl(217,33%,15%)" strokeDasharray="3 3" />
             <XAxis dataKey="idx" hide />
             <YAxis
