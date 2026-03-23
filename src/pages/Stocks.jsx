@@ -5,6 +5,8 @@ import { fetchStockHistory, normalizeStockSymbol } from '@/api/stockMarketClient
 import { BarChart3, TrendingUp, Activity, BookOpen, RefreshCw } from 'lucide-react';
 import StocksWatchList from '../components/stocks/StocksWatchList';
 import SharedCandleChart, { PRICE_CHART_MARGIN } from '@/components/charts/SharedCandleChart';
+import DrawingToolbar from '@/components/charts/DrawingToolbar';
+import DrawingLayer from '@/components/charts/DrawingLayer';
 import MovingAverageControls from '@/components/charts/MovingAverageControls';
 import { CHART_INTERVALS, CHART_DATE_RANGES, DATE_RANGES_BY_INTERVAL, DEFAULT_DATE_RANGE_BY_INTERVAL, rangeToCount } from '@/components/charts/chartConfig';
 import { createDefaultMovingAverages, enrichChartDataWithMovingAverages, getMovingAverageLineConfig } from '@/components/charts/movingAverages';
@@ -68,6 +70,8 @@ export default function Stocks() {
   const [indSearch, setIndSearch]               = useState('');
   const [dateRange, setDateRange] = useState(DEFAULT_DATE_RANGE_BY_INTERVAL['1w']);
   const [inspectionGuide, setInspectionGuide] = useState(null);
+  const [drawingTool, setDrawingTool] = useState('cursor');
+  const [drawings, setDrawings] = useState([]);
 
   // ── Interaction refs ──────────────────────────────────────────────────────
   const isDragging = useRef(false);
@@ -407,27 +411,54 @@ export default function Stocks() {
       </div>
 
       {/* Chart canvas */}
-      <div ref={containerRef} className="flex-1 min-h-0 select-none overflow-hidden"
-        onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp}
-        onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
-        onDoubleClick={resetChartView}
-        style={{ cursor: isDragging.current ? (dragAxisRef.current === 'x' ? 'ew-resize' : dragAxisRef.current === 'y' ? 'ns-resize' : 'grabbing') : 'crosshair', touchAction: 'none' }}>
-        {loading && !klines.length
-          ? <div className="w-full h-full flex items-center justify-center text-slate-500 text-sm gap-2"><RefreshCw className="w-4 h-4 animate-spin" />Loading chart…</div>
-          : <SharedCandleChart chartData={chartData} priceMin={priceMin} priceMax={priceMax}
-              width={svgSize.width} height={svgSize.height}
-              emaLines={movingAverageLines}
-              priceAxisPan={priceAxisPan}
-              priceZoom={priceZoom} isDragging={isDragging.current} dragAxisRef={dragAxisRef.current}
-              onCrosshairChange={setInspectionGuide}
-              gridStroke={theme === 'light' ? 'hsl(217,20%,88%)' : 'hsl(217,33%,19%)'}
-              gridOpacity={theme === 'light' ? 0.8 : 0.6}
-              axisLabelColor={theme === 'light' ? '#64748b' : '#6b7280'}
-              crosshairStroke={theme === 'light' ? 'rgba(100,116,139,0.5)' : 'rgba(148,163,184,0.4)'}
-              crosshairBadgeFill={theme === 'light' ? '#1e3a5f' : '#1e293b'}
-              crosshairBadgeStroke={theme === 'light' ? '#2563eb' : '#3b82f6'}
-              crosshairTextColor={theme === 'light' ? '#93c5fd' : '#60a5fa'} />
-        }
+      <div className="flex-1 min-h-0 flex" style={{ flex: '1.2 0 0%' }}>
+        <DrawingToolbar
+          activeTool={drawingTool}
+          onToolChange={setDrawingTool}
+          onClearAll={() => setDrawings([])}
+          theme={theme}
+        />
+        <div ref={containerRef} className="flex-1 min-h-0 select-none overflow-hidden relative"
+          onMouseDown={drawingTool === 'cursor' ? onMouseDown : undefined}
+          onMouseMove={drawingTool === 'cursor' ? onMouseMove : undefined}
+          onMouseUp={drawingTool === 'cursor' ? onMouseUp : undefined}
+          onMouseLeave={drawingTool === 'cursor' ? onMouseUp : undefined}
+          onTouchStart={drawingTool === 'cursor' ? onTouchStart : undefined}
+          onTouchMove={drawingTool === 'cursor' ? onTouchMove : undefined}
+          onTouchEnd={drawingTool === 'cursor' ? onTouchEnd : undefined}
+          onDoubleClick={drawingTool === 'cursor' ? resetChartView : undefined}
+          style={{ minHeight: 260, cursor: drawingTool !== 'cursor' ? 'crosshair' : (isDragging.current ? (dragAxisRef.current === 'x' ? 'ew-resize' : dragAxisRef.current === 'y' ? 'ns-resize' : 'grabbing') : 'crosshair'), touchAction: 'none' }}>
+          {loading && !klines.length
+            ? <div className="w-full h-full flex items-center justify-center text-slate-500 text-sm gap-2"><RefreshCw className="w-4 h-4 animate-spin" />Loading chart…</div>
+            : <SharedCandleChart chartData={chartData} priceMin={priceMin} priceMax={priceMax}
+                width={svgSize.width} height={svgSize.height}
+                emaLines={movingAverageLines}
+                priceAxisPan={priceAxisPan}
+                priceZoom={priceZoom} isDragging={isDragging.current} dragAxisRef={dragAxisRef.current}
+                onCrosshairChange={setInspectionGuide}
+                gridStroke={theme === 'light' ? 'hsl(217,20%,88%)' : 'hsl(217,33%,19%)'}
+                gridOpacity={theme === 'light' ? 0.8 : 0.6}
+                axisLabelColor={theme === 'light' ? '#64748b' : '#6b7280'}
+                crosshairStroke={theme === 'light' ? 'rgba(100,116,139,0.5)' : 'rgba(148,163,184,0.4)'}
+                crosshairBadgeFill={theme === 'light' ? '#1e3a5f' : '#1e293b'}
+                crosshairBadgeStroke={theme === 'light' ? '#2563eb' : '#3b82f6'}
+                crosshairTextColor={theme === 'light' ? '#93c5fd' : '#60a5fa'} />
+          }
+          <DrawingLayer
+            activeTool={drawingTool}
+            width={svgSize.width}
+            height={svgSize.height}
+            priceMin={priceMin}
+            priceMax={priceMax}
+            priceAxisPan={priceAxisPan}
+            priceZoom={priceZoom}
+            chartData={chartData}
+            drawings={drawings}
+            onAddDrawing={(d) => setDrawings((prev) => [...prev, d])}
+            onRemoveDrawing={(id) => setDrawings((prev) => prev.filter((d) => d.id !== id))}
+            theme={theme}
+          />
+        </div>
       </div>
 
       {/* TradingView-style date range selector */}

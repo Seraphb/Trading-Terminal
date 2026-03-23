@@ -4,6 +4,8 @@ import { format } from 'date-fns';
 import { Star } from 'lucide-react';
 import { getTerminalWatchlist, subscribeTerminalWatchlist, toggleTerminalWatchlistSymbol } from '@/lib/watchlists';
 import SharedCandleChart, { PRICE_CHART_MARGIN, formatPriceTwoDecimals } from '@/components/charts/SharedCandleChart';
+import DrawingToolbar from '@/components/charts/DrawingToolbar';
+import DrawingLayer from '@/components/charts/DrawingLayer';
 import MovingAverageControls from '@/components/charts/MovingAverageControls';
 import OverlayControls from '@/components/charts/OverlayControls';
 import { renderFibonacciOverlay, renderOpenInterestOverlay, renderLiquidationHeatmap, renderFairValueGaps, renderMACDOverlay, renderVolumeProfile } from '@/components/charts/chartOverlays';
@@ -94,6 +96,8 @@ export default function PriceChart({ klines, loading, symbol, interval, dateRang
   const [watchlistSymbols, setWatchlistSymbols] = useState(() => getTerminalWatchlist());
   const [inspectionGuide, setInspectionGuide] = useState(null);
   const [indicatorHeights, setIndicatorHeights] = useState({});
+  const [drawingTool, setDrawingTool] = useState('cursor');
+  const [drawings, setDrawings] = useState([]);
 
   // ── Interaction refs ────────────────────────────────────────────────────
   const isDragging           = useRef(false);
@@ -588,87 +592,109 @@ export default function PriceChart({ klines, loading, symbol, interval, dateRang
       </div>
 
       {/* Chart canvas */}
-      <div
-        ref={containerRef}
-        className="flex-1 min-h-0 select-none overflow-hidden relative"
-        style={{ flex: '1.2 0 0%', minHeight: 260, cursor: isDragging.current ? (dragAxisRef.current === 'x' ? 'ew-resize' : dragAxisRef.current === 'y' ? 'ns-resize' : 'grabbing') : 'crosshair', touchAction: 'none' }}
-        onMouseDown={onMouseDown}
-        onMouseMove={onMouseMove}
-        onMouseUp={onMouseUp}
-        onMouseLeave={onMouseUp}
-        onTouchStart={onTouchStart}
-        onTouchMove={onTouchMove}
-        onTouchEnd={onTouchEnd}
-        onDoubleClick={resetChartView}
-      >
-        {loading && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center" style={{ background: 'rgba(10,15,28,0.85)' }}>
-            <div className="flex flex-col items-center gap-3">
-              <svg className="animate-spin h-7 w-7 text-blue-500" viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2.5" opacity="0.2" />
-                <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
-              </svg>
-              <span className="text-xs text-slate-500 font-mono">Loading chart data…</span>
-            </div>
-          </div>
-        )}
-        <SharedCandleChart
-          chartData={chartData}
-          priceMin={priceMin}
-          priceMax={priceMax}
-          width={svgSize.width}
-          height={svgSize.height}
-          emaLines={movingAverageLines}
-          overlayElements={overlayElements}
-          topOverlay={signalMarkerOverlay}
-          showVolume={activeOverlays.includes('volume')}
-          priceAxisPan={priceAxisPan}
-          priceZoom={priceZoom}
-          isDragging={isDragging.current}
-          dragAxisRef={dragAxisRef.current}
-          onCrosshairChange={setInspectionGuide}
-          axisPriceFormatter={formatAxisPrice}
-          lastPriceFormatter={formatAxisPrice}
-          crosshairPriceFormatter={formatPriceTwoDecimals}
-          bullColor="#10b981"
-          bearColor="#ef4444"
-          volumeBullFill="rgba(16,185,129,0.25)"
-          volumeBearFill="rgba(239,68,68,0.25)"
-          gridStroke={theme === 'light' ? 'hsl(217,20%,88%)' : 'hsl(217,33%,19%)'}
-          gridOpacity={theme === 'light' ? 0.8 : 0.6}
-          axisLabelColor={theme === 'light' ? '#64748b' : '#6b7280'}
-          crosshairStroke={theme === 'light' ? 'rgba(100,116,139,0.5)' : 'rgba(148,163,184,0.4)'}
-          crosshairBadgeFill={theme === 'light' ? '#1e3a5f' : '#1e293b'}
-          crosshairBadgeStroke={theme === 'light' ? '#2563eb' : '#3b82f6'}
-          crosshairTextColor={theme === 'light' ? '#93c5fd' : '#60a5fa'}
+      <div className="flex-1 min-h-0 flex" style={{ flex: '1.2 0 0%' }}>
+        <DrawingToolbar
+          activeTool={drawingTool}
+          onToolChange={setDrawingTool}
+          onClearAll={() => setDrawings([])}
+          theme={theme}
         />
-        {/* Active overlay labels — top-left of chart */}
-        {activeOverlays.length > 0 && !loading && chartData.length > 0 && (
-          <div className="absolute top-3 left-2 z-[5] flex flex-wrap gap-x-2 gap-y-0.5 pointer-events-auto" style={{ maxWidth: '60%' }}>
-            {activeOverlays.map((key) => {
-              const label = { volume: 'Vol', liquidationHeatmap: 'Liq Heatmap', openInterest: 'OI', autoFib: 'Fib', fvg: 'FVG', macd: 'MACD' }[key] || key;
-              const color = { volume: '#64748b', liquidationHeatmap: '#f97316', openInterest: '#a855f7', autoFib: '#facc15', fvg: '#06b6d4', macd: '#f59e0b' }[key] || '#94a3b8';
-              return (
-                <span
-                  key={key}
-                  className="inline-flex items-center gap-0.5 text-[9px] leading-none opacity-60 hover:opacity-100 transition-opacity cursor-default group"
-                  style={{ color }}
-                >
-                  <span className="font-medium">{label}</span>
-                  <button
-                    type="button"
-                    className="ml-0 text-[8px] opacity-0 group-hover:opacity-80 hover:!opacity-100 transition-opacity"
+        <div
+          ref={containerRef}
+          className="flex-1 min-h-0 select-none overflow-hidden relative"
+          style={{ minHeight: 260, cursor: drawingTool !== 'cursor' ? 'crosshair' : (isDragging.current ? (dragAxisRef.current === 'x' ? 'ew-resize' : dragAxisRef.current === 'y' ? 'ns-resize' : 'grabbing') : 'crosshair'), touchAction: 'none' }}
+          onMouseDown={drawingTool === 'cursor' ? onMouseDown : undefined}
+          onMouseMove={drawingTool === 'cursor' ? onMouseMove : undefined}
+          onMouseUp={drawingTool === 'cursor' ? onMouseUp : undefined}
+          onMouseLeave={drawingTool === 'cursor' ? onMouseUp : undefined}
+          onTouchStart={drawingTool === 'cursor' ? onTouchStart : undefined}
+          onTouchMove={drawingTool === 'cursor' ? onTouchMove : undefined}
+          onTouchEnd={drawingTool === 'cursor' ? onTouchEnd : undefined}
+          onDoubleClick={drawingTool === 'cursor' ? resetChartView : undefined}
+        >
+          {loading && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center" style={{ background: 'rgba(10,15,28,0.85)' }}>
+              <div className="flex flex-col items-center gap-3">
+                <svg className="animate-spin h-7 w-7 text-blue-500" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2.5" opacity="0.2" />
+                  <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+                </svg>
+                <span className="text-xs text-slate-500 font-mono">Loading chart data…</span>
+              </div>
+            </div>
+          )}
+          <SharedCandleChart
+            chartData={chartData}
+            priceMin={priceMin}
+            priceMax={priceMax}
+            width={svgSize.width}
+            height={svgSize.height}
+            emaLines={movingAverageLines}
+            overlayElements={overlayElements}
+            topOverlay={signalMarkerOverlay}
+            showVolume={activeOverlays.includes('volume')}
+            priceAxisPan={priceAxisPan}
+            priceZoom={priceZoom}
+            isDragging={isDragging.current}
+            dragAxisRef={dragAxisRef.current}
+            onCrosshairChange={setInspectionGuide}
+            axisPriceFormatter={formatAxisPrice}
+            lastPriceFormatter={formatAxisPrice}
+            crosshairPriceFormatter={formatPriceTwoDecimals}
+            bullColor="#10b981"
+            bearColor="#ef4444"
+            volumeBullFill="rgba(16,185,129,0.25)"
+            volumeBearFill="rgba(239,68,68,0.25)"
+            gridStroke={theme === 'light' ? 'hsl(217,20%,88%)' : 'hsl(217,33%,19%)'}
+            gridOpacity={theme === 'light' ? 0.8 : 0.6}
+            axisLabelColor={theme === 'light' ? '#64748b' : '#6b7280'}
+            crosshairStroke={theme === 'light' ? 'rgba(100,116,139,0.5)' : 'rgba(148,163,184,0.4)'}
+            crosshairBadgeFill={theme === 'light' ? '#1e3a5f' : '#1e293b'}
+            crosshairBadgeStroke={theme === 'light' ? '#2563eb' : '#3b82f6'}
+            crosshairTextColor={theme === 'light' ? '#93c5fd' : '#60a5fa'}
+          />
+          {/* Active overlay labels — top-left of chart */}
+          {activeOverlays.length > 0 && !loading && chartData.length > 0 && (
+            <div className="absolute top-3 left-2 z-[5] flex flex-wrap gap-x-2 gap-y-0.5 pointer-events-auto" style={{ maxWidth: '60%' }}>
+              {activeOverlays.map((key) => {
+                const label = { volume: 'Vol', liquidationHeatmap: 'Liq Heatmap', openInterest: 'OI', autoFib: 'Fib', fvg: 'FVG', macd: 'MACD' }[key] || key;
+                const color = { volume: '#64748b', liquidationHeatmap: '#f97316', openInterest: '#a855f7', autoFib: '#facc15', fvg: '#06b6d4', macd: '#f59e0b' }[key] || '#94a3b8';
+                return (
+                  <span
+                    key={key}
+                    className="inline-flex items-center gap-0.5 text-[9px] leading-none opacity-60 hover:opacity-100 transition-opacity cursor-default group"
                     style={{ color }}
-                    onClick={(e) => { e.stopPropagation(); setActiveOverlays((prev) => prev.filter((k) => k !== key)); }}
-                    title={`Remove ${label}`}
                   >
-                    ✕
-                  </button>
-                </span>
-              );
-            })}
-          </div>
-        )}
+                    <span className="font-medium">{label}</span>
+                    <button
+                      type="button"
+                      className="ml-0 text-[8px] opacity-0 group-hover:opacity-80 hover:!opacity-100 transition-opacity"
+                      style={{ color }}
+                      onClick={(e) => { e.stopPropagation(); setActiveOverlays((prev) => prev.filter((k) => k !== key)); }}
+                      title={`Remove ${label}`}
+                    >
+                      ✕
+                    </button>
+                  </span>
+                );
+              })}
+            </div>
+          )}
+          <DrawingLayer
+            activeTool={drawingTool}
+            width={svgSize.width}
+            height={svgSize.height}
+            priceMin={priceMin}
+            priceMax={priceMax}
+            priceAxisPan={priceAxisPan}
+            priceZoom={priceZoom}
+            chartData={chartData}
+            drawings={drawings}
+            onAddDrawing={(d) => setDrawings((prev) => [...prev, d])}
+            onRemoveDrawing={(id) => setDrawings((prev) => prev.filter((d) => d.id !== id))}
+            theme={theme}
+          />
+        </div>
       </div>
 
       {/* Date range selector directly under chart */}
