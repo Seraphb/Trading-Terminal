@@ -1,11 +1,11 @@
-import React, { Suspense, lazy, useState, useCallback, useMemo } from 'react';
+import React, { Suspense, lazy, useState, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../components/ThemeContext';
 import {
   Search, Loader2, TrendingUp, TrendingDown, Filter, Eye,
   ArrowUpDown, Activity, BarChart3, Zap, ChevronDown, ChevronUp,
   SlidersHorizontal, Play, RotateCcw, Sparkles, ToggleLeft, ToggleRight,
-  Coins, LineChart
+  Coins, LineChart, Save
 } from 'lucide-react';
 
 const SymbolTerminalModal = lazy(() => import('../components/scanner/SymbolTerminalModal'));
@@ -403,8 +403,16 @@ export default function Screener() {
   const mutedC   = dark ? '#94a3b8' : '#64748b';
   const accentC  = '#3b82f6';
 
-  const [mode, setMode] = useState('crypto'); // 'crypto' | 'stocks'
-  const [filters, setFilters] = useState({ ...DEFAULT_FILTERS });
+  const [savedFlash, setSavedFlash] = useState(false);
+  const saveFlashTimer = useRef(null);
+
+  const loadSaved = () => {
+    try { return JSON.parse(localStorage.getItem('screener_settings_v1') || 'null'); } catch { return null; }
+  };
+  const saved = loadSaved();
+
+  const [mode, setMode] = useState(saved?.mode ?? 'crypto'); // 'crypto' | 'stocks'
+  const [filters, setFilters] = useState(saved?.filters ? { ...DEFAULT_FILTERS, ...saved.filters } : { ...DEFAULT_FILTERS });
   const [results, setResults] = useState([]);
   const [scanning, setScanning] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
@@ -414,8 +422,8 @@ export default function Screener() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [error, setError] = useState(null);
   const [symbolSearch, setSymbolSearch] = useState('');
-  const [timeframe, setTimeframe] = useState('1h');
-  const [dateRange, setDateRange] = useState('1M');
+  const [timeframe, setTimeframe] = useState(saved?.timeframe ?? '1h');
+  const [dateRange, setDateRange] = useState(saved?.dateRange ?? '1M');
 
   const DATE_RANGE_MAP = {
     '1D':  { interval: '5m',  limit: 288 },
@@ -441,6 +449,14 @@ export default function Screener() {
   const resetFilters = useCallback(() => {
     setFilters({ ...DEFAULT_FILTERS });
   }, []);
+
+  /* --- save settings --- */
+  const saveSettings = useCallback(() => {
+    localStorage.setItem('screener_settings_v1', JSON.stringify({ filters, mode, timeframe, dateRange }));
+    setSavedFlash(true);
+    clearTimeout(saveFlashTimer.current);
+    saveFlashTimer.current = setTimeout(() => setSavedFlash(false), 1800);
+  }, [filters, mode, timeframe, dateRange]);
 
   /* --- scan crypto --- */
   const runCryptoScan = useCallback(async () => {
@@ -894,6 +910,18 @@ export default function Screener() {
             onMouseLeave={e => { e.currentTarget.style.color = mutedC; e.currentTarget.style.borderColor = borderC; }}
           >
             <RotateCcw size={13} />
+          </button>
+          <button onClick={saveSettings} title="Save settings" style={{
+            padding: '10px 13px', borderRadius: '9px', border: `1px solid ${savedFlash ? '#22c55e' : borderC}`,
+            background: savedFlash ? 'rgba(34,197,94,0.12)' : 'transparent',
+            color: savedFlash ? '#22c55e' : mutedC, cursor: 'pointer',
+            display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, transition: 'all 0.15s',
+          }}
+            onMouseEnter={e => { if (!savedFlash) { e.currentTarget.style.color = '#22c55e'; e.currentTarget.style.borderColor = '#22c55e'; } }}
+            onMouseLeave={e => { if (!savedFlash) { e.currentTarget.style.color = mutedC; e.currentTarget.style.borderColor = borderC; } }}
+          >
+            <Save size={13} />
+            {savedFlash ? 'Saved!' : 'Save'}
           </button>
         </div>
       </div>
