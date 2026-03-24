@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { format } from 'date-fns';
-import { Brain, TrendingUp, TrendingDown, Minus, Trash2, BarChart2, Activity, BarChart3 } from 'lucide-react';
-import { loadSignals, clearSignals } from '@/lib/signalStore';
+import { Brain, TrendingUp, TrendingDown, Minus, Trash2, BarChart2, Activity, BarChart3, CheckCircle, XCircle, Target, Percent } from 'lucide-react';
+import { loadSignals, clearSignals, updateSignal } from '@/lib/signalStore';
 
 const directionConfig = {
   LONG:    { icon: TrendingUp,   color: '#22c55e', bg: 'rgba(34,197,94,0.1)',  border: 'rgba(34,197,94,0.25)'  },
@@ -58,9 +58,15 @@ export default function Signals() {
     const avgRR = withPrices.length
       ? withPrices.reduce((a, s) => a + (s.risk_reward_ratio || 0), 0) / withPrices.length
       : 0;
-    // Theoretical PnL: assume each LONG/SHORT hit TP 50% of time and SL 50%
-    // Simple: sum of (direction === LONG ? tpPct : -tpPct) — just show avg expected TP vs SL
-    return { total, longs, shorts, avgConf, avgTpPct, avgSlPct, avgRR };
+    // Outcome tracking
+    const closed = signals.filter(s => s.outcome === 'win' || s.outcome === 'loss');
+    const wins   = closed.filter(s => s.outcome === 'win');
+    const losses = closed.filter(s => s.outcome === 'loss');
+    const winRate = closed.length ? Math.round((wins.length / closed.length) * 100) : null;
+    const totalPnl = closed.reduce((acc, s) => acc + (s.realized_pnl || 0), 0);
+    const avgWinPct = wins.length ? wins.reduce((a, s) => a + (s.realized_pnl || 0), 0) / wins.length : 0;
+    const avgLossPct = losses.length ? Math.abs(losses.reduce((a, s) => a + (s.realized_pnl || 0), 0) / losses.length) : 0;
+    return { total, longs, shorts, avgConf, avgTpPct, avgSlPct, avgRR, closed: closed.length, wins: wins.length, losses: losses.length, winRate, totalPnl, avgWinPct, avgLossPct };
   }, [signals]);
 
   const cardStyle = { background: 'hsl(222,47%,13%)', border: '1px solid hsl(217,33%,22%)' };
@@ -123,13 +129,14 @@ export default function Signals() {
               <BarChart2 className="w-3.5 h-3.5 text-purple-400" />
               <span className="text-[11px] font-semibold text-slate-400 tracking-wider uppercase">Signal Performance</span>
             </div>
+            {/* Row 1: Basic stats */}
             <div className="grid grid-cols-5 gap-3 mb-3">
               {[
-                { label: 'Total',       value: stats.total,             color: '#c084fc' },
-                { label: 'Long',        value: stats.longs,             color: '#22c55e' },
-                { label: 'Short',       value: stats.shorts,            color: '#ef4444' },
-                { label: 'Avg Conf',    value: stats.avgConf + '%',     color: '#60a5fa' },
-                { label: 'Avg R:R',     value: '1:' + stats.avgRR.toFixed(1), color: stats.avgRR >= 2 ? '#22c55e' : '#eab308' },
+                { label: 'Total',    value: stats.total,                        color: '#c084fc' },
+                { label: 'Long',     value: stats.longs,                        color: '#22c55e' },
+                { label: 'Short',    value: stats.shorts,                       color: '#ef4444' },
+                { label: 'Avg Conf', value: stats.avgConf + '%',               color: '#60a5fa' },
+                { label: 'Avg R:R',  value: '1:' + stats.avgRR.toFixed(1),     color: stats.avgRR >= 2 ? '#22c55e' : '#eab308' },
               ].map(({ label, value, color }) => (
                 <div key={label} className="text-center">
                   <div className="text-[9px] text-slate-500 mb-1">{label}</div>
@@ -138,24 +145,58 @@ export default function Signals() {
               ))}
             </div>
             {/* TP vs SL bar */}
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 mb-3">
               <span className="text-[10px] text-emerald-400 w-16 text-right font-mono">+{stats.avgTpPct.toFixed(1)}% TP</span>
               <div className="flex-1 h-2 rounded-full overflow-hidden flex" style={{ background: 'hsl(217,33%,18%)' }}>
-                {/* green left half = TP, red right half = SL */}
                 <div style={{
                   width: `${Math.min(100, (stats.avgTpPct / (stats.avgTpPct + stats.avgSlPct || 1)) * 100)}%`,
                   background: 'linear-gradient(90deg, #16a34a, #22c55e)',
                   borderRadius: '3px 0 0 3px',
                   transition: 'width 0.4s',
                 }} />
-                <div style={{
-                  flex: 1,
-                  background: 'linear-gradient(90deg, #ef4444, #b91c1c)',
-                  borderRadius: '0 3px 3px 0',
-                }} />
+                <div style={{ flex: 1, background: 'linear-gradient(90deg, #ef4444, #b91c1c)', borderRadius: '0 3px 3px 0' }} />
               </div>
               <span className="text-[10px] text-red-400 w-16 font-mono">-{stats.avgSlPct.toFixed(1)}% SL</span>
             </div>
+            {/* Row 2: Outcome accuracy (only shown if any closed) */}
+            {stats.closed > 0 && (
+              <div className="pt-3 border-t" style={{ borderColor: 'hsl(217,33%,20%)' }}>
+                <div className="flex items-center gap-2 mb-2">
+                  <Target className="w-3 h-3 text-amber-400" />
+                  <span className="text-[10px] font-semibold text-slate-500 tracking-wider uppercase">Outcome Accuracy</span>
+                </div>
+                <div className="grid grid-cols-5 gap-3">
+                  {[
+                    { label: 'Closed',    value: stats.closed,                                       color: '#94a3b8' },
+                    { label: 'Wins',      value: stats.wins,                                         color: '#22c55e' },
+                    { label: 'Losses',    value: stats.losses,                                       color: '#ef4444' },
+                    { label: 'Win Rate',  value: stats.winRate != null ? stats.winRate + '%' : '—',  color: (stats.winRate || 0) >= 50 ? '#22c55e' : '#ef4444' },
+                    { label: 'Total PnL', value: (stats.totalPnl >= 0 ? '+' : '') + stats.totalPnl.toFixed(1) + '%', color: stats.totalPnl >= 0 ? '#22c55e' : '#ef4444' },
+                  ].map(({ label, value, color }) => (
+                    <div key={label} className="text-center">
+                      <div className="text-[9px] text-slate-500 mb-1">{label}</div>
+                      <div className="text-sm font-bold font-mono" style={{ color }}>{value}</div>
+                    </div>
+                  ))}
+                </div>
+                {/* Win/loss bar */}
+                {stats.closed > 0 && (
+                  <div className="flex items-center gap-3 mt-2">
+                    <span className="text-[10px] text-emerald-400 w-16 text-right font-mono">+{stats.avgWinPct.toFixed(1)}% avg</span>
+                    <div className="flex-1 h-1.5 rounded-full overflow-hidden flex" style={{ background: 'hsl(217,33%,18%)' }}>
+                      <div style={{
+                        width: `${stats.winRate || 0}%`,
+                        background: 'linear-gradient(90deg, #16a34a, #22c55e)',
+                        borderRadius: '3px 0 0 3px',
+                        transition: 'width 0.4s',
+                      }} />
+                      <div style={{ flex: 1, background: 'linear-gradient(90deg, #ef4444, #b91c1c)', borderRadius: '0 3px 3px 0' }} />
+                    </div>
+                    <span className="text-[10px] text-red-400 w-16 font-mono">-{stats.avgLossPct.toFixed(1)}% avg</span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -180,11 +221,12 @@ export default function Signals() {
           <div className="hidden sm:flex items-center gap-4 px-4 pb-1 text-[10px] font-semibold text-slate-600 uppercase tracking-wider">
             <div className="w-9 flex-shrink-0" />
             <div className="flex-1" />
-            <div className="flex items-center gap-4 flex-shrink-0" style={{ minWidth: 280 }}>
+            <div className="flex items-center gap-4 flex-shrink-0" style={{ minWidth: 360 }}>
               <div className="w-20 text-center">Entry</div>
               <div className="w-20 text-center text-emerald-700">Target</div>
               <div className="w-20 text-center text-red-700">Stop</div>
               <div className="w-12 text-center">R:R</div>
+              <div className="w-16 text-center">Outcome</div>
             </div>
             <div className="w-4 flex-shrink-0" />
           </div>
@@ -234,7 +276,7 @@ export default function Signals() {
                     </div>
                   </div>
 
-                  <div className="hidden sm:flex items-center gap-4 font-mono flex-shrink-0" style={{ minWidth: 280 }}>
+                  <div className="hidden sm:flex items-center gap-4 font-mono flex-shrink-0" style={{ minWidth: 360 }}>
                     <div className="w-20 text-center text-sm font-semibold text-slate-300">{fmtPrice(signal.entry_price)}</div>
                     <div className="w-20 text-center">
                       <div className="text-sm font-semibold text-emerald-400">{fmtPrice(signal.target_price)}</div>
@@ -248,8 +290,54 @@ export default function Signals() {
                       style={{ color: (signal.risk_reward_ratio || 0) >= 2 ? '#22c55e' : '#eab308' }}>
                       1:{signal.risk_reward_ratio?.toFixed(1) || '—'}
                     </div>
+                    {signal.outcome && (
+                      <div className="w-16 text-center">
+                        <div className="text-[9px] font-bold px-1.5 py-0.5 rounded"
+                          style={{
+                            background: signal.outcome === 'win' ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)',
+                            color: signal.outcome === 'win' ? '#22c55e' : '#ef4444',
+                          }}>
+                          {signal.outcome === 'win' ? '✓ WIN' : '✗ LOSS'}
+                        </div>
+                        <div className="text-[10px] font-mono font-bold mt-0.5"
+                          style={{ color: signal.outcome === 'win' ? '#22c55e' : '#ef4444' }}>
+                          {signal.realized_pnl != null ? (signal.realized_pnl >= 0 ? '+' : '') + signal.realized_pnl.toFixed(1) + '%' : ''}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
+                  {/* W/L outcome buttons */}
+                  <div className="flex items-center gap-1 flex-shrink-0" onClick={e => e.stopPropagation()}>
+                    <button
+                      onClick={() => {
+                        const tpPct = entry ? Math.abs((signal.target_price - entry) / entry * 100) : 0;
+                        updateSignal(signal.id, { outcome: signal.outcome === 'win' ? null : 'win', realized_pnl: signal.outcome === 'win' ? 0 : tpPct });
+                      }}
+                      title="Mark as Win"
+                      style={{
+                        padding: '3px 7px', borderRadius: '5px', border: 'none', cursor: 'pointer',
+                        fontSize: '10px', fontWeight: 700,
+                        background: signal.outcome === 'win' ? 'rgba(34,197,94,0.25)' : 'rgba(34,197,94,0.07)',
+                        color: signal.outcome === 'win' ? '#22c55e' : '#374151',
+                        transition: 'all 0.15s',
+                      }}
+                    >W</button>
+                    <button
+                      onClick={() => {
+                        const slPct = entry ? -Math.abs((entry - signal.stop_loss) / entry * 100) : 0;
+                        updateSignal(signal.id, { outcome: signal.outcome === 'loss' ? null : 'loss', realized_pnl: signal.outcome === 'loss' ? 0 : slPct });
+                      }}
+                      title="Mark as Loss"
+                      style={{
+                        padding: '3px 7px', borderRadius: '5px', border: 'none', cursor: 'pointer',
+                        fontSize: '10px', fontWeight: 700,
+                        background: signal.outcome === 'loss' ? 'rgba(239,68,68,0.25)' : 'rgba(239,68,68,0.07)',
+                        color: signal.outcome === 'loss' ? '#ef4444' : '#374151',
+                        transition: 'all 0.15s',
+                      }}
+                    >L</button>
+                  </div>
                   <div className="text-slate-600 transition-transform flex-shrink-0"
                     style={{ transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>›</div>
                 </button>

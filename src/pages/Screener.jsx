@@ -1,11 +1,11 @@
-import React, { Suspense, lazy, useState, useCallback, useMemo, useRef } from 'react';
+import React, { Suspense, lazy, useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../components/ThemeContext';
 import {
   Search, Loader2, TrendingUp, TrendingDown, Filter, Eye,
   ArrowUpDown, Activity, BarChart3, Zap, ChevronDown, ChevronUp,
   SlidersHorizontal, Play, RotateCcw, Sparkles, ToggleLeft, ToggleRight,
-  Coins, LineChart, Save
+  Coins, LineChart, Save, Download, Bell, BellOff, Clock
 } from 'lucide-react';
 
 const SymbolTerminalModal = lazy(() => import('../components/scanner/SymbolTerminalModal'));
@@ -388,6 +388,56 @@ function fmtVol(n) {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
+/*                     SCREENER UTILITIES                                    */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+async function sendScanAlert(matchedResults, mode) {
+  if (!matchedResults.length) return;
+  try {
+    const cfg = JSON.parse(localStorage.getItem('scanner_telegram_config') || '{}');
+    if (!cfg.botToken || !cfg.chatId) return;
+    const top = matchedResults.slice(0, 5).map(r =>
+      `• <b>${r.symbol}</b> — ${r.signalStatus.replace('_', ' ').toUpperCase()} | RSI ${r.rsi != null ? r.rsi.toFixed(1) : '—'}`
+    ).join('\n');
+    const text = `🔍 <b>Screener Alert (${mode})</b>\n${matchedResults.length} match${matchedResults.length !== 1 ? 'es' : ''} found\n\n${top}`;
+    await fetch(`https://api.telegram.org/bot${cfg.botToken}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: cfg.chatId, text, parse_mode: 'HTML' }),
+    });
+  } catch {}
+}
+
+function exportToCSV(results, isCrypto) {
+  if (!results.length) return;
+  const headers = ['Symbol', 'Price', '24h%', 'RSI', 'Signal', 'ΔMA21%', 'ΔMA50%', 'ΔMA200%', 'EMA Cross', 'Vol Chg%', 'MACD', 'Volume24h'];
+  const rows = results.map(r => [
+    r.symbol,
+    r.price ?? '',
+    r.priceChange24h ?? '',
+    r.rsi != null ? r.rsi.toFixed(2) : '',
+    r.signalStatus,
+    r.dist21 != null ? r.dist21.toFixed(2) : '',
+    r.dist50 != null ? r.dist50.toFixed(2) : '',
+    r.dist200 != null ? r.dist200.toFixed(2) : '',
+    r.emaCross ?? '',
+    r.volumeChange ?? '',
+    r.macdCross ?? '',
+    r.quoteVolume ?? '',
+  ]);
+  const csv = [headers, ...rows].map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `screener_${isCrypto ? 'crypto' : 'stocks'}_${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
 /*                          MAIN COMPONENT                                   */
 /* ══════════════════════════════════════════════════════════════════════════ */
 
@@ -405,6 +455,8 @@ export default function Screener() {
 
   const [savedFlash, setSavedFlash] = useState(false);
   const saveFlashTimer = useRef(null);
+  const [autoScanMins, setAutoScanMins] = useState(0); // 0 = off
+  const autoScanTimerRef = useRef(null);
 
   const loadSaved = () => {
     try { return JSON.parse(localStorage.getItem('screener_settings_v1') || 'null'); } catch { return null; }
@@ -457,6 +509,16 @@ export default function Screener() {
     clearTimeout(saveFlashTimer.current);
     saveFlashTimer.current = setTimeout(() => setSavedFlash(false), 1800);
   }, [filters, mode, timeframe, dateRange]);
+
+  /* --- auto-scan interval --- */
+  useEffect(() => {
+    if (autoScanTimerRef.current) clearInterval(autoScanTimerRef.current);
+    if (autoScanMins > 0) {
+      autoScanTimerRef.current = setInterval(() => { runScan(); }, autoScanMins * 60 * 1000);
+    }
+    return () => { if (autoScanTimerRef.current) clearInterval(autoScanTimerRef.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoScanMins]);
 
   /* --- scan crypto --- */
   const runCryptoScan = useCallback(async () => {
@@ -511,6 +573,7 @@ export default function Screener() {
 
       const filtered = allResults.filter(r => matchesFilters(r, filters));
       setResults(filtered);
+      sendScanAlert(filtered, 'crypto');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -531,6 +594,7 @@ export default function Screener() {
       setProgress({ done: STOCK_TICKERS.length, total: STOCK_TICKERS.length });
       const filtered = allResults.filter(r => matchesFilters(r, filters));
       setResults(filtered);
+      sendScanAlert(filtered, 'stocks');
       setScanning(false);
     }, 600);
   }, [filters]);
@@ -957,10 +1021,7 @@ export default function Screener() {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
             {scanning && (
-              <span style={{
-                display: 'flex', alignItems: 'center', gap: '5px',
-                color: accentC, fontWeight: 500,
-              }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '5px', color: accentC, fontWeight: 500 }}>
                 <Loader2 size={12} className="animate-spin" />
                 Scanning {progress.done}/{progress.total}
               </span>
@@ -973,6 +1034,49 @@ export default function Screener() {
                 {results.length} result{results.length !== 1 ? 's' : ''}
               </span>
             )}
+            {/* CSV Export */}
+            {results.length > 0 && !scanning && (
+              <button
+                onClick={() => exportToCSV(sortedResultsWithDist, isCrypto)}
+                title="Export to CSV"
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '4px',
+                  padding: '4px 9px', borderRadius: '7px',
+                  border: `1px solid ${borderC}`, background: 'transparent',
+                  color: mutedC, cursor: 'pointer', fontSize: '11px', fontWeight: 600,
+                  transition: 'all 0.15s',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.color = '#22c55e'; e.currentTarget.style.borderColor = '#22c55e'; }}
+                onMouseLeave={e => { e.currentTarget.style.color = mutedC; e.currentTarget.style.borderColor = borderC; }}
+              >
+                <Download size={12} /> CSV
+              </button>
+            )}
+            {/* Auto-scan interval */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <Clock size={12} style={{ color: autoScanMins > 0 ? '#f59e0b' : mutedC }} />
+              <select
+                value={autoScanMins}
+                onChange={e => setAutoScanMins(Number(e.target.value))}
+                title="Auto-scan interval"
+                style={{
+                  padding: '3px 6px', borderRadius: '6px',
+                  border: `1px solid ${autoScanMins > 0 ? '#f59e0b55' : borderC}`,
+                  background: autoScanMins > 0 ? '#f59e0b12' : (dark ? 'hsl(217,33%,10%)' : '#f1f5f9'),
+                  color: autoScanMins > 0 ? '#f59e0b' : mutedC,
+                  fontSize: '11px', fontWeight: 600, cursor: 'pointer', outline: 'none',
+                }}
+              >
+                <option value={0}>Off</option>
+                <option value={5}>5 min</option>
+                <option value={15}>15 min</option>
+                <option value={30}>30 min</option>
+                <option value={60}>1 hr</option>
+              </select>
+              {autoScanMins > 0 && (
+                <span style={{ fontSize: '10px', color: '#f59e0b', fontWeight: 600 }}>AUTO</span>
+              )}
+            </div>
           </div>
         </div>
 

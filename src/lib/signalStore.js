@@ -27,3 +27,12 @@ export function clearSignals() {
   localStorage.removeItem(KEY);
   window.dispatchEvent(new Event('signals-updated'));
 }
+
+export function updateSignal(id, updates) {
+  const signals = loadSignals();
+  const idx = signals.findIndex(s => s.id === id);
+  if (idx === -1) return;
+  signals[idx] = { ...signals[idx], ...updates };
+  localStorage.setItem(KEY, JSON.stringify(signals));
+  window.dispatchEvent(new Event('signals-updated'));
+}
