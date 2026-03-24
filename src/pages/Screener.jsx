@@ -210,6 +210,14 @@ function computeIndicators(klines, ticker) {
 const STOCK_TICKERS = [
   'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 'JPM', 'V', 'WMT',
   'JNJ', 'PG', 'UNH', 'HD', 'MA', 'DIS', 'PYPL', 'NFLX', 'INTC', 'AMD',
+  'BABA', 'CRM', 'ORCL', 'CSCO', 'ADBE', 'QCOM', 'TXN', 'AVGO', 'MU', 'AMAT',
+  'GS', 'MS', 'BAC', 'C', 'WFC', 'BLK', 'AXP', 'SCHW', 'USB', 'PNC',
+  'XOM', 'CVX', 'COP', 'SLB', 'EOG', 'MPC', 'PSX', 'VLO', 'OXY', 'HAL',
+  'LLY', 'MRK', 'ABBV', 'BMY', 'AMGN', 'GILD', 'REGN', 'BIIB', 'VRTX', 'ZTS',
+  'KO', 'PEP', 'MCD', 'SBUX', 'YUM', 'CMG', 'DPZ', 'DKNG', 'WYNN', 'MGM',
+  'BA', 'LMT', 'RTX', 'NOC', 'GD', 'HON', 'MMM', 'GE', 'CAT', 'DE',
+  'AMZN', 'ETSY', 'SHOP', 'MELI', 'SE', 'CPNG', 'W', 'CHWY', 'EBAY', 'FTCH',
+  'UBER', 'LYFT', 'ABNB', 'DASH', 'RIVN', 'LCID', 'NIO', 'XPEV', 'LI', 'GM',
 ];
 
 function generateStockPlaceholder(ticker) {
@@ -329,16 +337,19 @@ function matchesFilters(ind, filters) {
   if (filters.vsMa !== 'any') {
     if ((ind.emaSignals?.[filters.vsMaPeriod] || null) !== filters.vsMa) return false;
   }
-  if (true) {
+  if (filters.maDistEnabled) {
     const [type, periodStr] = filters.maDistPeriod.split('_');
     const period = Number(periodStr);
     const maVal = type === 'sma' ? ind.smaValues?.[period] : ind.emaValues?.[period];
-    if (maVal == null) return false;
-    const dist = ((ind.price - maVal) / maVal) * 100;
-    const pct = filters.maDistPct;
-    if (filters.maDistMode === 'within' && Math.abs(dist) > pct) return false;
-    if (filters.maDistMode === 'above' && (dist < 0 || dist > pct)) return false;
-    if (filters.maDistMode === 'below' && (dist > 0 || dist < -pct)) return false;
+    if (maVal != null) {
+      // Only apply the distance filter if the MA was computable (enough candles)
+      const dist = ((ind.price - maVal) / maVal) * 100;
+      const pct = filters.maDistPct;
+      if (filters.maDistMode === 'within' && Math.abs(dist) > pct) return false;
+      if (filters.maDistMode === 'above' && (dist < 0 || dist > pct)) return false;
+      if (filters.maDistMode === 'below' && (dist > 0 || dist < -pct)) return false;
+    }
+    // if maVal is null → not enough candles for this MA → skip silently
   }
   if (filters.volumeChangeMin != null && ind.volumeChange < filters.volumeChangeMin) return false;
   if (filters.priceChangePreset !== 'any') {
@@ -457,6 +468,7 @@ export default function Screener() {
   const saveFlashTimer = useRef(null);
   const [autoScanMins, setAutoScanMins] = useState(0); // 0 = off
   const autoScanTimerRef = useRef(null);
+  const [symLimit, setSymLimit] = useState(saved?.symLimit ?? 50); // number of symbols to scan
 
   const loadSaved = () => {
     try { return JSON.parse(localStorage.getItem('screener_settings_v1') || 'null'); } catch { return null; }
@@ -477,14 +489,10 @@ export default function Screener() {
   const [timeframe, setTimeframe] = useState(saved?.timeframe ?? '1h');
   const [dateRange, setDateRange] = useState(saved?.dateRange ?? '1M');
 
-  const DATE_RANGE_MAP = {
-    '1D':  { interval: '5m',  limit: 288 },
-    '1W':  { interval: '1h',  limit: 168 },
-    '1M':  { interval: '4h',  limit: 180 },
-    '3M':  { interval: '1d',  limit: 90  },
-    '6M':  { interval: '1d',  limit: 180 },
-    '1Y':  { interval: '1d',  limit: 365 },
-  };
+  // Days per date range label
+  const DATE_RANGE_DAYS = { '1D': 1, '1W': 7, '1M': 30, '3M': 90, '6M': 180, '1Y': 365 };
+  // Candles per day for each timeframe
+  const TF_CANDLES_PER_DAY = { '1m': 1440, '5m': 288, '15m': 96, '30m': 48, '1h': 24, '4h': 6, '1d': 1, '1w': 0.143 };
   const TIMEFRAMES = ['1m','5m','15m','1h','4h','1d','1w'];
   const DATE_RANGES = ['1D','1W','1M','3M','6M','1Y'];
 
@@ -504,7 +512,7 @@ export default function Screener() {
 
   /* --- save settings --- */
   const saveSettings = useCallback(() => {
-    localStorage.setItem('screener_settings_v1', JSON.stringify({ filters, mode, timeframe, dateRange }));
+    localStorage.setItem('screener_settings_v1', JSON.stringify({ filters, mode, timeframe, dateRange, symLimit }));
     setSavedFlash(true);
     clearTimeout(saveFlashTimer.current);
     saveFlashTimer.current = setTimeout(() => setSavedFlash(false), 1800);
@@ -525,9 +533,12 @@ export default function Screener() {
     setScanning(true);
     setError(null);
     setResults([]);
-    const rangeConfig = DATE_RANGE_MAP[dateRange] || DATE_RANGE_MAP['1M'];
-    const klineInterval = timeframe !== '1h' ? timeframe : rangeConfig.interval;
-    const klineLimit = rangeConfig.limit;
+    // Always use the user-selected timeframe as kline interval
+    const klineInterval = timeframe;
+    // Compute how many candles are needed: days × candles-per-day, capped at 1000
+    const days = DATE_RANGE_DAYS[dateRange] || 90;
+    const cpd  = TF_CANDLES_PER_DAY[timeframe] || 24;
+    const klineLimit = Math.min(1000, Math.max(250, Math.ceil(days * cpd)));
     try {
       const tickerRes = await fetch('https://api.binance.com/api/v3/ticker/24hr');
       if (!tickerRes.ok) throw new Error(`Ticker API error: ${tickerRes.status}`);
@@ -541,7 +552,7 @@ export default function Screener() {
         const q = symbolSearch.trim().toUpperCase().replace('/USDT','').replace('USDT','');
         usdtTickers = usdtTickers.filter(t => t.symbol.startsWith(q));
       } else {
-        usdtTickers = usdtTickers.slice(0, 50);
+        usdtTickers = usdtTickers.slice(0, symLimit);
       }
 
       const symbols = usdtTickers.map(t => t.symbol);
@@ -579,25 +590,26 @@ export default function Screener() {
     } finally {
       setScanning(false);
     }
-  }, [filters, timeframe, dateRange, symbolSearch]);
+  }, [filters, timeframe, dateRange, symbolSearch, symLimit]);
 
   /* --- scan stocks (placeholder) --- */
   const runStockScan = useCallback(() => {
     setScanning(true);
     setError(null);
     setResults([]);
-    setProgress({ done: 0, total: STOCK_TICKERS.length });
+    const stocksToScan = STOCK_TICKERS.slice(0, symLimit);
+    setProgress({ done: 0, total: stocksToScan.length });
 
     // Simulate brief loading for UX
     setTimeout(() => {
-      const allResults = STOCK_TICKERS.map(t => generateStockPlaceholder(t));
-      setProgress({ done: STOCK_TICKERS.length, total: STOCK_TICKERS.length });
+      const allResults = stocksToScan.map(t => generateStockPlaceholder(t));
+      setProgress({ done: stocksToScan.length, total: stocksToScan.length });
       const filtered = allResults.filter(r => matchesFilters(r, filters));
       setResults(filtered);
       sendScanAlert(filtered, 'stocks');
       setScanning(false);
     }, 600);
-  }, [filters]);
+  }, [filters, symLimit]);
 
   const runScan = useCallback(() => {
     if (mode === 'crypto') runCryptoScan();
@@ -751,6 +763,29 @@ export default function Screener() {
                 onFocus={e => { e.target.style.borderColor = accentC; }}
                 onBlur={e => { e.target.style.borderColor = borderC; }}
               />
+            </div>
+          </div>
+
+          {/* Symbol Count */}
+          <div style={{ marginBottom: '14px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px' }}>
+              <div style={{ fontSize: '10px', textTransform: 'uppercase', color: mutedC, fontWeight: 700, letterSpacing: '0.7px' }}>
+                {isCrypto ? 'Symbols to Scan' : 'Stocks to Scan'}
+              </div>
+              <span style={{ fontSize: '11px', color: accentC, fontWeight: 700 }}>Top {symLimit}</span>
+            </div>
+            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+              {(isCrypto ? [25, 50, 100, 200] : [10, 25, 50, 100]).map(n => (
+                <button key={n} onClick={() => setSymLimit(n)} style={{
+                  flex: 1, padding: '4px 0', borderRadius: '6px',
+                  border: `1px solid ${symLimit === n ? accentC + '88' : borderC}`,
+                  background: symLimit === n ? `${accentC}18` : 'transparent',
+                  color: symLimit === n ? accentC : mutedC,
+                  fontSize: '11px', fontWeight: 600, cursor: 'pointer', transition: 'all 0.12s',
+                }}>
+                  {n}
+                </button>
+              ))}
             </div>
           </div>
 
@@ -1009,6 +1044,21 @@ export default function Screener() {
             }}>
               <Filter size={13} />
             </button>
+            {/* Active scan config info */}
+            <span style={{
+              fontSize: '10px', padding: '2px 8px', borderRadius: '20px',
+              background: dark ? 'hsl(217,33%,14%)' : '#e2e8f0', color: mutedC,
+              border: `1px solid ${borderC}`, fontWeight: 600, letterSpacing: '0.3px',
+              display: 'flex', alignItems: 'center', gap: 4,
+            }}>
+              {timeframe.toUpperCase()} · {dateRange} · Top {symLimit}
+              {isCrypto && (() => {
+                const days = DATE_RANGE_DAYS[dateRange] || 90;
+                const cpd  = TF_CANDLES_PER_DAY[timeframe] || 24;
+                const cnt  = Math.min(1000, Math.max(250, Math.ceil(days * cpd)));
+                return <span style={{ color: accentC }}>({cnt} candles)</span>;
+              })()}
+            </span>
             {!isCrypto && (
               <span style={{
                 fontSize: '10px', padding: '2px 7px', borderRadius: '20px',
