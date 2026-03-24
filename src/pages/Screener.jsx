@@ -468,7 +468,6 @@ export default function Screener() {
   const saveFlashTimer = useRef(null);
   const [autoScanMins, setAutoScanMins] = useState(0); // 0 = off
   const autoScanTimerRef = useRef(null);
-  const [symLimit, setSymLimit] = useState(saved?.symLimit ?? 50); // number of symbols to scan
 
   const loadSaved = () => {
     try { return JSON.parse(localStorage.getItem('screener_settings_v1') || 'null'); } catch { return null; }
@@ -488,6 +487,7 @@ export default function Screener() {
   const [symbolSearch, setSymbolSearch] = useState('');
   const [timeframe, setTimeframe] = useState(saved?.timeframe ?? '1h');
   const [dateRange, setDateRange] = useState(saved?.dateRange ?? '1M');
+  const [symLimit, setSymLimit] = useState(saved?.symLimit ?? 50); // number of symbols to scan
 
   // Days per date range label
   const DATE_RANGE_DAYS = { '1D': 1, '1W': 7, '1M': 30, '3M': 90, '6M': 180, '1Y': 365 };
