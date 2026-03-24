@@ -10,7 +10,7 @@ import MovingAverageControls from '@/components/charts/MovingAverageControls';
 import OverlayControls from '@/components/charts/OverlayControls';
 import { renderFibonacciOverlay, renderOpenInterestOverlay, renderLiquidationHeatmap, renderFairValueGaps, renderMACDOverlay, renderVolumeProfile } from '@/components/charts/chartOverlays';
 import { CHART_INTERVALS, CHART_DATE_RANGES, DATE_RANGES_BY_INTERVAL, DEFAULT_DATE_RANGE_BY_INTERVAL, rangeToCount } from '@/components/charts/chartConfig';
-import { createDefaultMovingAverages, enrichChartDataWithMovingAverages, getMovingAverageLineConfig } from '@/components/charts/movingAverages';
+import { createDefaultMovingAverages, createMovingAverage, enrichChartDataWithMovingAverages, getMovingAverageLineConfig } from '@/components/charts/movingAverages';
 import { formatAssetPrice } from '@/lib/assetPriceFormat';
 import { useOpenInterest, useFundingRate } from './useBinanceWS';
 
@@ -83,7 +83,7 @@ function formatAxisPrice(value) {
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function PriceChart({ klines, loading, symbol, interval, dateRange, onIntervalChange, onDateRangeChange, onVisibleRangeChange, goldSignalTime = null, goldSignalPrice = null, signals = null, tickers = {}, mode = 'crypto' }) {
+export default function PriceChart({ klines, loading, symbol, interval, dateRange, onIntervalChange, onDateRangeChange, onVisibleRangeChange, goldSignalTime = null, goldSignalPrice = null, signals = null, tickers = {}, mode = 'crypto', highlightMA = null }) {
   const isStock = mode === 'stock';
   const { theme } = useTheme();
   const [visibleCount, setVisibleCount] = useState(100);
@@ -95,7 +95,26 @@ export default function PriceChart({ klines, loading, symbol, interval, dateRang
   const [showMenu, setShowMenu]               = useState(false);
   const [showStrategy, setShowStrategy]       = useState(false);
   const [indSearch, setIndSearch]             = useState('');
-  const [movingAverages, setMovingAverages] = useState(() => createDefaultMovingAverages());
+  const [movingAverages, setMovingAverages] = useState(() => {
+    const defaults = createDefaultMovingAverages();
+    if (highlightMA) {
+      // Check if the highlighted MA already exists in defaults
+      const exists = defaults.some(ma => ma.type === highlightMA.type && ma.period === highlightMA.period);
+      if (!exists) {
+        // Add the screener-searched MA in gold color
+        defaults.push(createMovingAverage(highlightMA.type, highlightMA.period, '#FFD700', true));
+      } else {
+        // It exists — change its color to gold so it stands out
+        defaults.forEach(ma => {
+          if (ma.type === highlightMA.type && ma.period === highlightMA.period) {
+            ma.color = '#FFD700';
+            ma.visible = true;
+          }
+        });
+      }
+    }
+    return defaults;
+  });
   const [activeOverlays, setActiveOverlays] = useState(['volume']);
   const [watchlistSymbols, setWatchlistSymbols] = useState(() => getTerminalWatchlist());
   const [inspectionGuide, setInspectionGuide] = useState(null);

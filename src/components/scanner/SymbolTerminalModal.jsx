@@ -14,7 +14,7 @@ function PanelSkeleton() {
 }
 
 // ── Crypto view — live via Binance WebSocket ───────────────────────────────
-function CryptoView({ symbol, goldSignalTime, goldSignalPrice, signals, scanTimeframe }) {
+function CryptoView({ symbol, goldSignalTime, goldSignalPrice, signals, scanTimeframe, highlightMA }) {
   const sym = symbol.toLowerCase();
   const initInterval = scanTimeframe === '4h' ? '4h' : scanTimeframe === '1d' ? '1d' : '1w';
   const initRange = scanTimeframe === '4h' ? '3M' : scanTimeframe === '1d' ? '1Y' : '3Y';
@@ -41,6 +41,7 @@ function CryptoView({ symbol, goldSignalTime, goldSignalPrice, signals, scanTime
           goldSignalTime={goldSignalTime}
           goldSignalPrice={goldSignalPrice}
           signals={signals}
+          highlightMA={highlightMA}
         />
       </div>
 
@@ -66,7 +67,7 @@ function CryptoView({ symbol, goldSignalTime, goldSignalPrice, signals, scanTime
 }
 
 // ── Stock view — fetches historical data ──────────────────────────────────
-function StockView({ symbol, goldSignalTime, goldSignalPrice, signals, scanTimeframe }) {
+function StockView({ symbol, goldSignalTime, goldSignalPrice, signals, scanTimeframe, highlightMA }) {
   const initInterval = scanTimeframe === '1d' ? '1d' : '1w';
   const initRange = scanTimeframe === '1d' ? '1Y' : '3Y';
   const [interval, setChartInterval]   = useState(initInterval);
@@ -105,6 +106,7 @@ function StockView({ symbol, goldSignalTime, goldSignalPrice, signals, scanTimef
         goldSignalTime={goldSignalTime}
         goldSignalPrice={goldSignalPrice}
         signals={signals}
+        highlightMA={highlightMA}
       />
     </div>
   );
@@ -180,8 +182,8 @@ export default function SymbolTerminalModal({ result, onClose }) {
         {/* Chart area */}
         <div className="flex-1 min-h-0 overflow-hidden">
           {result.isCrypto
-            ? <CryptoView symbol={result.symbol} goldSignalTime={result.goldSignalTime} goldSignalPrice={result.goldSignalPrice} signals={result.signals} scanTimeframe={result.scanTimeframe} />
-            : <StockView  symbol={result.symbol} goldSignalTime={result.goldSignalTime} goldSignalPrice={result.goldSignalPrice} signals={result.signals} scanTimeframe={result.scanTimeframe} />
+            ? <CryptoView symbol={result.symbol} goldSignalTime={result.goldSignalTime} goldSignalPrice={result.goldSignalPrice} signals={result.signals} scanTimeframe={result.scanTimeframe} highlightMA={result.highlightMA} />
+            : <StockView  symbol={result.symbol} goldSignalTime={result.goldSignalTime} goldSignalPrice={result.goldSignalPrice} signals={result.signals} scanTimeframe={result.scanTimeframe} highlightMA={result.highlightMA} />
           }
         </div>
       </div>

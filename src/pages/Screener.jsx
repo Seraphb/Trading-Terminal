@@ -203,6 +203,8 @@ function computeIndicators(klines, ticker) {
   };
 }
 
+
+
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*                           STOCK DATA                                      */
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -314,8 +316,8 @@ const DEFAULT_FILTERS = {
   vsMaPeriod: 50,
   maDistEnabled: true,
   maDistPeriod: 'ema_200', // 'ema_N' or 'sma_N'
-  maDistMode: 'within',    // 'within' | 'above' | 'below'
-  maDistPct: 5,
+  maDistMode: 'above',     // 'within' | 'above' | 'below'
+  maDistPct: 0,
   volumeChangeMin: null,
   priceChangePreset: 'any',
   macd: 'any',
@@ -345,11 +347,16 @@ function matchesFilters(ind, filters) {
       // Only apply the distance filter if the MA was computable (enough candles)
       const dist = ((ind.price - maVal) / maVal) * 100;
       const pct = filters.maDistPct;
+      // 'within': price within ±X% of MA
+      // 'above':  price is at least X% above MA (dist >= pct)
+      // 'below':  price is at least X% below MA (dist <= -pct)
       if (filters.maDistMode === 'within' && Math.abs(dist) > pct) return false;
-      if (filters.maDistMode === 'above' && (dist < 0 || dist > pct)) return false;
-      if (filters.maDistMode === 'below' && (dist > 0 || dist < -pct)) return false;
+      if (filters.maDistMode === 'above' && dist < pct) return false;
+      if (filters.maDistMode === 'below' && dist > -pct) return false;
+    } else {
+      // MA not computable (insufficient candles) → exclude symbol so filter is not silently bypassed
+      return false;
     }
-    // if maVal is null → not enough candles for this MA → skip silently
   }
   if (filters.volumeChangeMin != null && ind.volumeChange < filters.volumeChangeMin) return false;
   if (filters.priceChangePreset !== 'any') {
@@ -470,7 +477,7 @@ export default function Screener() {
   const autoScanTimerRef = useRef(null);
 
   const loadSaved = () => {
-    try { return JSON.parse(localStorage.getItem('screener_settings_v1') || 'null'); } catch { return null; }
+    try { return JSON.parse(localStorage.getItem('screener_settings_v2') || 'null'); } catch { return null; }
   };
   const saved = loadSaved();
 
@@ -485,8 +492,8 @@ export default function Screener() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [error, setError] = useState(null);
   const [symbolSearch, setSymbolSearch] = useState('');
-  const [timeframe, setTimeframe] = useState(saved?.timeframe ?? '1h');
-  const [dateRange, setDateRange] = useState(saved?.dateRange ?? '1M');
+  const [timeframe, setTimeframe] = useState(saved?.timeframe ?? '4h');
+  const [dateRange, setDateRange] = useState(saved?.dateRange ?? '3M');
   const [symLimit, setSymLimit] = useState(saved?.symLimit ?? 50); // number of symbols to scan
 
   // Days per date range label
@@ -512,11 +519,11 @@ export default function Screener() {
 
   /* --- save settings --- */
   const saveSettings = useCallback(() => {
-    localStorage.setItem('screener_settings_v1', JSON.stringify({ filters, mode, timeframe, dateRange, symLimit }));
+    localStorage.setItem('screener_settings_v2', JSON.stringify({ filters, mode, timeframe, dateRange, symLimit }));
     setSavedFlash(true);
     clearTimeout(saveFlashTimer.current);
     saveFlashTimer.current = setTimeout(() => setSavedFlash(false), 1800);
-  }, [filters, mode, timeframe, dateRange]);
+  }, [filters, mode, timeframe, dateRange, symLimit]);
 
   /* --- auto-scan interval --- */
   useEffect(() => {
@@ -636,6 +643,8 @@ export default function Screener() {
 
   /* --- open terminal --- */
   const openTerminal = useCallback((row) => {
+    // Parse the MA filter to pass to the chart for gold highlighting
+    const [maType, maPeriodStr] = filters.maDistPeriod.split('_');
     setTerminalResult({
       symbol: row.symbol,
       isCrypto: mode === 'crypto',
@@ -643,9 +652,10 @@ export default function Screener() {
       goldSignalTime: null,
       goldSignalPrice: null,
       signals: [],
-      scanTimeframe: '1d',
+      scanTimeframe: timeframe,
+      highlightMA: { type: maType.toUpperCase(), period: Number(maPeriodStr) },
     });
-  }, [mode]);
+  }, [mode, filters.maDistPeriod, timeframe]);
 
   /* --- update single filter --- */
   const setFilter = useCallback((key, val) => {
@@ -666,15 +676,22 @@ export default function Screener() {
 
   const isCrypto = mode === 'crypto';
 
+  // Build the searched MA column label from the active filter
+  const [searchedMaType, searchedMaPeriodStr] = filters.maDistPeriod.split('_');
+  const searchedMaPeriod = Number(searchedMaPeriodStr);
+  const searchedMaLabel = `${searchedMaType.toUpperCase()} ${searchedMaPeriod}`;
+  const searchedMaKey = `distSearched`; // dynamic distance column
+
   const columns = [
     { key: 'symbol',        label: 'Symbol',      w: '110px' },
     { key: 'price',         label: 'Price',       w: '100px' },
     { key: 'priceChange24h',label: '24h %',       w: '80px'  },
     { key: 'rsi',           label: 'RSI(14)',     w: '70px'  },
     { key: 'signalStatus',  label: 'Signal',      w: '95px'  },
-    { key: 'dist21',        label: 'Δ MA21',      w: '75px'  },
-    { key: 'dist50',        label: 'Δ MA50',      w: '75px'  },
-    { key: 'dist200',       label: 'Δ MA200',     w: '75px'  },
+    { key: searchedMaKey,   label: `Δ ${searchedMaLabel}`, w: '90px', isSearched: true },
+    { key: 'dist21',        label: 'Δ EMA21',     w: '75px'  },
+    { key: 'dist50',        label: 'Δ EMA50',     w: '75px'  },
+    { key: 'dist200',       label: 'Δ EMA200',    w: '75px'  },
     { key: 'emaCross',      label: 'EMA Cross',   w: '90px'  },
     { key: 'volumeChange',  label: 'Vol Chg %',   w: '90px'  },
     { key: 'macdCross',     label: 'MACD',        w: '85px'  },
@@ -683,13 +700,20 @@ export default function Screener() {
 
   // Pre-compute distances for sorting/display
   const sortedResultsWithDist = useMemo(() => {
-    return sortedResults.map(row => ({
-      ...row,
-      dist21:  row.emaValues?.[21]  ? ((row.price - row.emaValues[21])  / row.emaValues[21])  * 100 : null,
-      dist50:  row.emaValues?.[50]  ? ((row.price - row.emaValues[50])  / row.emaValues[50])  * 100 : null,
-      dist200: row.emaValues?.[200] ? ((row.price - row.emaValues[200]) / row.emaValues[200]) * 100 : null,
-    }));
-  }, [sortedResults]);
+    return sortedResults.map(row => {
+      // Compute the searched MA distance
+      const searchedVals = searchedMaType === 'sma' ? row.smaValues : row.emaValues;
+      const searchedMaVal = searchedVals?.[searchedMaPeriod];
+      const distSearched = searchedMaVal ? ((row.price - searchedMaVal) / searchedMaVal) * 100 : null;
+      return {
+        ...row,
+        distSearched,
+        dist21:  row.emaValues?.[21]  ? ((row.price - row.emaValues[21])  / row.emaValues[21])  * 100 : null,
+        dist50:  row.emaValues?.[50]  ? ((row.price - row.emaValues[50])  / row.emaValues[50])  * 100 : null,
+        dist200: row.emaValues?.[200] ? ((row.price - row.emaValues[200]) / row.emaValues[200]) * 100 : null,
+      };
+    });
+  }, [sortedResults, searchedMaType, searchedMaPeriod]);
 
   const sidebarBg  = dark ? 'hsl(217,33%,7%)'  : '#f1f5f9';
   const topBarBg   = dark ? 'hsl(217,33%,7%)'  : '#f1f5f9';
@@ -774,7 +798,7 @@ export default function Screener() {
               </div>
               <span style={{ fontSize: '11px', color: accentC, fontWeight: 700 }}>Top {symLimit}</span>
             </div>
-            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '5px' }}>
               {(isCrypto ? [25, 50, 100, 200] : [10, 25, 50, 100]).map(n => (
                 <button key={n} onClick={() => setSymLimit(n)} style={{
                   flex: 1, padding: '4px 0', borderRadius: '6px',
@@ -787,6 +811,25 @@ export default function Screener() {
                 </button>
               ))}
             </div>
+            <input
+              type="number"
+              min={1}
+              max={isCrypto ? 500 : 200}
+              value={symLimit}
+              onChange={e => {
+                const v = Math.max(1, Math.min(isCrypto ? 500 : 200, Number(e.target.value) || 1));
+                setSymLimit(v);
+              }}
+              placeholder="Custom #"
+              style={{
+                width: '100%', padding: '5px 9px', borderRadius: '7px',
+                border: `1px solid ${borderC}`, background: cardBg, color: textC,
+                fontSize: '12px', outline: 'none', boxSizing: 'border-box',
+                transition: 'border-color 0.15s',
+              }}
+              onFocus={e => { e.target.style.borderColor = accentC; }}
+              onBlur={e => { e.target.style.borderColor = borderC; }}
+            />
           </div>
 
           {/* Timeframe */}
@@ -931,17 +974,25 @@ export default function Screener() {
                 ))}
               </select>
               <SelectFilter value={filters.maDistMode} onChange={v => setFilter('maDistMode', v)}
-                options={[['within','Within'],['above','Above'],['below','Below']]}
+                options={[['within','Within ±%'],['above','≥% Above'],['below','≥% Below']]}
                 cardBg={cardBg} borderC={borderC} textC={textC} accentC={accentC} dark={dark} />
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <input type="range" min={0} max={30} step={0.5}
+              <input type="range" min={0} max={50} step={0.5}
                 value={filters.maDistPct}
                 onChange={e => setFilter('maDistPct', Number(e.target.value))}
                 style={{ flex: 1, accentColor: accentC }} />
               <span style={{ fontSize: '11px', color: accentC, minWidth: '32px', textAlign: 'right' }}>
                 {filters.maDistPct}%
               </span>
+            </div>
+            <div style={{ fontSize: '10px', color: mutedC, marginTop: '4px', lineHeight: 1.4 }}>
+              {filters.maDistMode === 'within'
+                ? `Price within ±${filters.maDistPct}% of ${filters.maDistPeriod.replace('_',' ').toUpperCase()}`
+                : filters.maDistMode === 'above'
+                  ? `Price ≥${filters.maDistPct}% above ${filters.maDistPeriod.replace('_',' ').toUpperCase()}`
+                  : `Price ≥${filters.maDistPct}% below ${filters.maDistPeriod.replace('_',' ').toUpperCase()}`
+              }
             </div>
           </FilterSection>
 
@@ -1186,10 +1237,12 @@ export default function Screener() {
                   {columns.map(col => (
                     <th key={col.key} onClick={() => handleSort(col.key)} style={{
                       padding: '9px 10px', textAlign: 'left', cursor: 'pointer',
-                      borderBottom: `1px solid ${borderC}`, fontWeight: 600,
-                      color: sortCol === col.key ? accentC : mutedC,
+                      borderBottom: `1px solid ${col.isSearched ? '#f59e0b' : borderC}`,
+                      fontWeight: col.isSearched ? 800 : 600,
+                      color: col.isSearched ? '#f59e0b' : (sortCol === col.key ? accentC : mutedC),
                       fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.7px',
                       width: col.w, whiteSpace: 'nowrap', userSelect: 'none',
+                      background: col.isSearched ? '#f59e0b0a' : 'transparent',
                     }}>
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
                         {col.label}
@@ -1262,15 +1315,19 @@ export default function Screener() {
                       <SignalStatusBadge status={row.signalStatus} />
                     </td>
 
-                    {/* Δ MA21 */}
+                    {/* Δ Searched MA (gold highlighted) */}
+                    <td style={{ padding: '7px 10px', fontFamily: 'monospace', fontSize: '11px', fontWeight: 700, background: '#f59e0b08' }}>
+                      <DistBadge val={row.distSearched} gold />
+                    </td>
+                    {/* Δ EMA21 */}
                     <td style={{ padding: '7px 10px', fontFamily: 'monospace', fontSize: '11px', fontWeight: 600 }}>
                       <DistBadge val={row.dist21} />
                     </td>
-                    {/* Δ MA50 */}
+                    {/* Δ EMA50 */}
                     <td style={{ padding: '7px 10px', fontFamily: 'monospace', fontSize: '11px', fontWeight: 600 }}>
                       <DistBadge val={row.dist50} />
                     </td>
-                    {/* Δ MA200 */}
+                    {/* Δ EMA200 */}
                     <td style={{ padding: '7px 10px', fontFamily: 'monospace', fontSize: '11px', fontWeight: 600 }}>
                       <DistBadge val={row.dist200} />
                     </td>
@@ -1417,12 +1474,25 @@ function SignalStatusBadge({ status }) {
   );
 }
 
-function DistBadge({ val }) {
+function DistBadge({ val, gold }) {
   if (val == null) return <span style={{ color: '#475569' }}>—</span>;
   const pct = Math.round(val * 100) / 100;
   const abs = Math.abs(pct);
   const bull = pct >= 0;
   const intense = abs > 10;
+  if (gold) {
+    return (
+      <span style={{
+        display: 'inline-flex', alignItems: 'center',
+        padding: '2px 7px', borderRadius: '20px', fontSize: '11px', fontWeight: 700,
+        background: '#f59e0b20',
+        color: '#f59e0b',
+        border: '1px solid #f59e0b44',
+      }}>
+        {bull ? '+' : ''}{pct.toFixed(2)}%
+      </span>
+    );
+  }
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center',
