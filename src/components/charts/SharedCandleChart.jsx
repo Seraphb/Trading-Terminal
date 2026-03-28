@@ -213,52 +213,50 @@ export default memo(function SharedCandleChart({
       {/* ── Overlay layer (behind candles) ── */}
       {overlayElements}
 
-      {showVolume && chartData.map((datum, index) => {
-        if (datum.isBlank) return null;
-        const x = toX(index);
-        const barH = (datum.volume / maxVol) * volH;
-        const isBull = datum.close >= datum.open;
-        return (
-          <rect
-            key={`vol-${index}`}
-            x={x - candleBodyW / 2}
-            y={PRICE_CHART_MARGIN.top + plotH - barH}
-            width={candleBodyW}
-            height={Math.max(barH, 1)}
-            fill={isBull ? volumeBullFill : volumeBearFill}
-          />
-        );
-      })}
+      {/* ── Volume + Candles: batched into <path> elements for performance ── */}
+      {(() => {
+        let volBullD = '', volBearD = '';
+        let bullWickD = '', bearWickD = '';
+        let bullBodyD = '', bearBodyD = '';
+        const volBase = PRICE_CHART_MARGIN.top + plotH;
+        const halfBody = candleBodyW / 2;
 
-      {chartData.map((datum, index) => {
-        if (datum.isBlank) return null;
-        const x = toX(index);
-        const isBull = datum.close >= datum.open;
-        const candleColor = isBull ? bullColor : bearColor;
-        const highY = toY(datum.high);
-        const lowY = toY(datum.low);
-        const openY = toY(datum.open);
-        const closeY = toY(datum.close);
-        const bodyTop = Math.min(openY, closeY);
-        const bodyBot = Math.max(openY, closeY);
-        const bodyH = Math.max(bodyBot - bodyTop, 2);
+        for (let i = 0; i < chartData.length; i++) {
+          const d = chartData[i];
+          if (d.isBlank) continue;
+          const x = toX(i);
+          const isBull = d.close >= d.open;
+
+          if (showVolume) {
+            const barH = Math.max((d.volume / maxVol) * volH, 1);
+            const vd = `M${x - halfBody},${volBase - barH}h${candleBodyW}v${barH}h${-candleBodyW}Z`;
+            if (isBull) volBullD += vd; else volBearD += vd;
+          }
+
+          const highY = toY(d.high);
+          const lowY = toY(d.low);
+          const openY = toY(d.open);
+          const closeY = toY(d.close);
+          const bodyTop = Math.min(openY, closeY);
+          const bodyH = Math.max(Math.max(openY, closeY) - bodyTop, 2);
+
+          const wick = `M${x},${highY}V${lowY}`;
+          const body = `M${x - halfBody},${bodyTop}h${candleBodyW}v${bodyH}h${-candleBodyW}Z`;
+          if (isBull) { bullWickD += wick; bullBodyD += body; }
+          else        { bearWickD += wick; bearBodyD += body; }
+        }
 
         return (
-          <g key={`candle-${index}`}>
-            <line x1={x} y1={highY} x2={x} y2={lowY} stroke={candleColor} strokeWidth={wickW} opacity={0.9} />
-            <rect
-              x={x - candleBodyW / 2}
-              y={bodyTop}
-              width={candleBodyW}
-              height={bodyH}
-              fill={candleColor}
-              stroke={candleColor}
-              strokeWidth={1}
-              opacity={isBull ? 0.85 : 0.9}
-            />
-          </g>
+          <>
+            {showVolume && volBullD && <path d={volBullD} fill={volumeBullFill} />}
+            {showVolume && volBearD && <path d={volBearD} fill={volumeBearFill} />}
+            {bullWickD && <path d={bullWickD} fill="none" stroke={bullColor} strokeWidth={wickW} opacity={0.9} />}
+            {bearWickD && <path d={bearWickD} fill="none" stroke={bearColor} strokeWidth={wickW} opacity={0.9} />}
+            {bullBodyD && <path d={bullBodyD} fill={bullColor} stroke={bullColor} strokeWidth={1} opacity={0.85} />}
+            {bearBodyD && <path d={bearBodyD} fill={bearColor} stroke={bearColor} strokeWidth={1} opacity={0.9} />}
+          </>
         );
-      })}
+      })()}
 
       {emaLines
         .filter((line) => line.show)

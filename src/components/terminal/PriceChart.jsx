@@ -145,6 +145,8 @@ export default function PriceChart({ klines, loading, symbol, interval, dateRang
   // Pinch
   const pinchStartDist       = useRef(0);
   const pinchStartVC         = useRef(100);
+  // rAF throttle
+  const rafId                = useRef(0);
 
   // ── Sync refs ───────────────────────────────────────────────────────────
   useEffect(() => { visibleCountRef.current = visibleCount; },   [visibleCount]);
@@ -269,69 +271,75 @@ export default function PriceChart({ klines, loading, symbol, interval, dateRang
 
   const onMouseMove = useCallback((e) => {
     if (!isDragging.current) return;
-    const { width: sw, height: sh } = svgSizeRef.current;
-    const plotW = (sw || 600) - PRICE_CHART_MARGIN.right;
-    const plotH = (sh || 400) - PRICE_CHART_MARGIN.top - PRICE_CHART_MARGIN.bottom;
-    const containerRect = containerRef.current?.getBoundingClientRect();
-    const inPlotArea = containerRect &&
-      e.clientX >= containerRect.left + PRICE_CHART_MARGIN.left &&
-      e.clientX <= containerRect.left + PRICE_CHART_MARGIN.left + plotW &&
-      e.clientY >= containerRect.top + PRICE_CHART_MARGIN.top &&
-      e.clientY <= containerRect.top + PRICE_CHART_MARGIN.top + plotH;
+    // Snapshot values synchronously (React synthetic event is pooled)
+    const cx = e.clientX, cy = e.clientY;
+    if (rafId.current) return; // skip if a frame is already pending
+    rafId.current = requestAnimationFrame(() => {
+      rafId.current = 0;
+      if (!isDragging.current) return;
+      const { width: sw, height: sh } = svgSizeRef.current;
+      const plotW = (sw || 600) - PRICE_CHART_MARGIN.right;
+      const plotH = (sh || 400) - PRICE_CHART_MARGIN.top - PRICE_CHART_MARGIN.bottom;
+      const containerRect = containerRef.current?.getBoundingClientRect();
+      const inPlotArea = containerRect &&
+        cx >= containerRect.left + PRICE_CHART_MARGIN.left &&
+        cx <= containerRect.left + PRICE_CHART_MARGIN.left + plotW &&
+        cy >= containerRect.top + PRICE_CHART_MARGIN.top &&
+        cy <= containerRect.top + PRICE_CHART_MARGIN.top + plotH;
 
-    const pixelDeltaX = dragStartX.current - e.clientX;
-    const pixelDeltaY = e.clientY - dragStartY.current;
+      const pixelDeltaX = dragStartX.current - cx;
+      const pixelDeltaY = cy - dragStartY.current;
 
-    if (!dragAxisRef.current) {
-      const absX = Math.abs(pixelDeltaX), absY = Math.abs(pixelDeltaY);
-      if (absX > 4 && absX > absY)      dragAxisRef.current = inPlotArea ? 'plot-x' : 'x';
-      else if (absY > 4 && absY > absX) dragAxisRef.current = inPlotArea ? 'plot-y' : 'y';
-      else return;
-    }
+      if (!dragAxisRef.current) {
+        const absX = Math.abs(pixelDeltaX), absY = Math.abs(pixelDeltaY);
+        if (absX > 4 && absX > absY)      dragAxisRef.current = inPlotArea ? 'plot-x' : 'x';
+        else if (absY > 4 && absY > absX) dragAxisRef.current = inPlotArea ? 'plot-y' : 'y';
+        else return;
+      }
 
-    const startVC = dragStartVisibleCount.current;
-    const startPZ = dragStartPriceZoom.current;
-    const kl      = klineLengthRef.current;
-    const pMax    = priceMaxRef.current;
-    const pMin    = priceMinRef.current;
+      const startVC = dragStartVisibleCount.current;
+      const startPZ = dragStartPriceZoom.current;
+      const kl      = klineLengthRef.current;
+      const pMax    = priceMaxRef.current;
+      const pMin    = priceMinRef.current;
 
-    if (dragAxisRef.current === 'plot-x') {
-      const candleW    = plotW / startVC;
-      const delta      = Math.round(-pixelDeltaX / candleW);
-      const maxRightPad = Math.floor(startVC / 2);
-      setPanOffset(Math.max(-maxRightPad, Math.min(dragStartOffset.current + delta, Math.max(0, kl - startVC))));
-    }
+      if (dragAxisRef.current === 'plot-x') {
+        const candleW    = plotW / startVC;
+        const delta      = Math.round(-pixelDeltaX / candleW);
+        const maxRightPad = Math.floor(startVC / 2);
+        setPanOffset(Math.max(-maxRightPad, Math.min(dragStartOffset.current + delta, Math.max(0, kl - startVC))));
+      }
 
-    if (dragAxisRef.current === 'plot-y') {
-      const pricePan = -(pixelDeltaY / plotH) * ((pMax - pMin) * startPZ);
-      setPriceAxisPan(dragStartPriceAxisPan.current + pricePan);
-    }
+      if (dragAxisRef.current === 'plot-y') {
+        const pricePan = -(pixelDeltaY / plotH) * ((pMax - pMin) * startPZ);
+        setPriceAxisPan(dragStartPriceAxisPan.current + pricePan);
+      }
 
-    if (dragAxisRef.current === 'x') {
-      // Exponential: drag left = zoom out, drag right = zoom in
-      const newVC = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX,
-        Math.round(startVC * Math.exp(-pixelDeltaX / plotW * 2))));
-      const countDelta = startVC - newVC;
-      const newOffset  = Math.max(0, Math.min(
-        dragStartOffset.current + Math.round(countDelta / 2),
-        Math.max(0, kl - newVC)));
-      setPanOffset(newOffset);
-      setVisibleCount(newVC);
-    }
+      if (dragAxisRef.current === 'x') {
+        const newVC = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX,
+          Math.round(startVC * Math.exp(-pixelDeltaX / plotW * 2))));
+        const countDelta = startVC - newVC;
+        const newOffset  = Math.max(0, Math.min(
+          dragStartOffset.current + Math.round(countDelta / 2),
+          Math.max(0, kl - newVC)));
+        setPanOffset(newOffset);
+        setVisibleCount(newVC);
+      }
 
-    if (dragAxisRef.current === 'y') {
-      // Exponential: drag up = zoom in (stretch), drag down = zoom out (compact)
-      const newPZ = Math.max(0.3, Math.min(8,
-        startPZ * Math.exp(pixelDeltaY / plotH * 2)));
-      const centerRange = (pMax - pMin) * startPZ / 2;
-      setPriceAxisPan(dragStartPriceAxisPan.current - (newPZ - startPZ) * centerRange / 2);
-      setPriceZoom(newPZ);
-    }
+      if (dragAxisRef.current === 'y') {
+        const newPZ = Math.max(0.3, Math.min(8,
+          startPZ * Math.exp(pixelDeltaY / plotH * 2)));
+        const centerRange = (pMax - pMin) * startPZ / 2;
+        setPriceAxisPan(dragStartPriceAxisPan.current - (newPZ - startPZ) * centerRange / 2);
+        setPriceZoom(newPZ);
+      }
+    });
   }, []);
 
   const onMouseUp = useCallback(() => {
     isDragging.current  = false;
     dragAxisRef.current = null;
+    if (rafId.current) { cancelAnimationFrame(rafId.current); rafId.current = 0; }
   }, []);
 
   // ── Touch / pinch-to-zoom ───────────────────────────────────────────────
@@ -351,31 +359,38 @@ export default function PriceChart({ klines, loading, symbol, interval, dateRang
   }, []);
 
   const onTouchMove = useCallback((e) => {
-    if (e.touches.length === 2) {
-      e.preventDefault();
-      const dx   = e.touches[0].clientX - e.touches[1].clientX;
-      const dy   = e.touches[0].clientY - e.touches[1].clientY;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (pinchStartDist.current > 0) {
-        const newVC = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX,
-          Math.round(pinchStartVC.current * (pinchStartDist.current / dist))));
-        setVisibleCount(newVC);
+    if (e.touches.length === 2) e.preventDefault();
+    // Snapshot touch coords synchronously
+    const touches = Array.from(e.touches).map(t => ({ clientX: t.clientX, clientY: t.clientY }));
+    if (rafId.current) return;
+    rafId.current = requestAnimationFrame(() => {
+      rafId.current = 0;
+      if (touches.length === 2) {
+        const dx   = touches[0].clientX - touches[1].clientX;
+        const dy   = touches[0].clientY - touches[1].clientY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (pinchStartDist.current > 0) {
+          const newVC = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX,
+            Math.round(pinchStartVC.current * (pinchStartDist.current / dist))));
+          setVisibleCount(newVC);
+        }
+      } else if (touches.length === 1 && isDragging.current) {
+        const { width: sw } = svgSizeRef.current;
+        const plotW  = (sw || 600) - PRICE_CHART_MARGIN.right;
+        const startVC = dragStartVisibleCount.current;
+        const candleW = plotW / startVC;
+        const delta       = Math.round((touches[0].clientX - dragStartX.current) / candleW);
+        const maxRightPad = Math.floor(startVC / 2);
+        setPanOffset(Math.max(-maxRightPad, Math.min(dragStartOffset.current + delta, Math.max(0, klineLengthRef.current - startVC))));
       }
-    } else if (e.touches.length === 1 && isDragging.current) {
-      const { width: sw } = svgSizeRef.current;
-      const plotW  = (sw || 600) - PRICE_CHART_MARGIN.right;
-      const startVC = dragStartVisibleCount.current;
-      const candleW = plotW / startVC;
-      const delta       = Math.round((e.touches[0].clientX - dragStartX.current) / candleW);
-      const maxRightPad = Math.floor(startVC / 2);
-      setPanOffset(Math.max(-maxRightPad, Math.min(dragStartOffset.current + delta, Math.max(0, klineLengthRef.current - startVC))));
-    }
+    });
   }, []);
 
   const onTouchEnd = useCallback(() => {
     pinchStartDist.current = 0;
     isDragging.current     = false;
     dragAxisRef.current    = null;
+    if (rafId.current) { cancelAnimationFrame(rafId.current); rafId.current = 0; }
   }, []);
 
   // ── Wheel zoom (anywhere on chart) ─────────────────────────────────────
