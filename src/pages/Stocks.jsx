@@ -68,6 +68,7 @@ export default function Stocks() {
     const cacheKey = `${sym}:${iv}`;
     if (klinesCache.has(cacheKey)) { setKlines(klinesCache.get(cacheKey)); return; }
     setLoading(true);
+    setKlines([]);
     try {
       const historyConfig = {
         '1m':  { interval: '1m',  range: '7d',   bars: 10080 },
@@ -80,7 +81,7 @@ export default function Stocks() {
       }[iv] || { interval: '1d', range: '5y', bars: 1825 };
       const res = await fetchStockHistory(sym, historyConfig);
       const sorted = res.sort((a, b) => a.time - b.time);
-      klinesCache.set(cacheKey, sorted);
+      if (sorted.length) klinesCache.set(cacheKey, sorted);
       setKlines(sorted);
     } catch (err) {
       console.error('Failed to fetch stock history:', err);
@@ -89,6 +90,7 @@ export default function Stocks() {
     setLoading(false);
   };
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { fetchKlines(symbol, interval); }, [symbol, interval]);
 
   useEffect(() => {
