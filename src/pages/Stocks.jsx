@@ -37,6 +37,7 @@ export default function Stocks() {
   const [dateRange, setDateRange] = useState(DEFAULT_DATE_RANGE_BY_INTERVAL['1w']);
   const [klines, setKlines]   = useState([]);
   const [loading, setLoading] = useState(false);
+  const [fetchError, setFetchError] = useState(null);
   const [activeTab, setActiveTab] = useState('summary');
   const [fundamentals, setFundamentals] = useState(null);
   const [dcf, setDcf]               = useState(null);
@@ -69,6 +70,7 @@ export default function Stocks() {
     if (klinesCache.has(cacheKey)) { setKlines(klinesCache.get(cacheKey)); return; }
     setLoading(true);
     setKlines([]);
+    setFetchError(null);
     try {
       const historyConfig = {
         '1m':  { interval: '1m',  range: '7d',   bars: 10080 },
@@ -85,6 +87,7 @@ export default function Stocks() {
       setKlines(sorted);
     } catch (err) {
       console.error('Failed to fetch stock history:', err);
+      setFetchError(`Could not load data for "${sym}". Check the ticker symbol is valid.`);
       setKlines([]);
     }
     setLoading(false);
@@ -112,16 +115,26 @@ export default function Stocks() {
 
   // ── Shared chart+indicator panel ─────────────────────────────────────────
   const ChartColumn = (
-    <PriceChart
-      mode="stock"
-      klines={klines}
-      loading={loading}
-      symbol={symbol}
-      interval={interval}
-      dateRange={dateRange}
-      onIntervalChange={(iv) => setInterval_(iv)}
-      onDateRangeChange={(r) => setDateRange(r)}
-    />
+    <div className="relative h-full">
+      <PriceChart
+        mode="stock"
+        klines={klines}
+        loading={loading}
+        symbol={symbol}
+        interval={interval}
+        dateRange={dateRange}
+        onIntervalChange={(iv) => setInterval_(iv)}
+        onDateRangeChange={(r) => setDateRange(r)}
+      />
+      {fetchError && !loading && !klines.length && (
+        <div className="absolute inset-0 flex items-center justify-center z-20" style={{ background: 'rgba(10,15,28,0.85)' }}>
+          <div className="text-center px-6 py-4 rounded-lg border border-red-500/30 bg-red-500/10 max-w-xs">
+            <p className="text-red-400 text-sm font-medium mb-1">Failed to load chart</p>
+            <p className="text-slate-400 text-xs">{fetchError}</p>
+          </div>
+        </div>
+      )}
+    </div>
   );
 
   return (
