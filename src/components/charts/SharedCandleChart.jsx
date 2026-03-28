@@ -1,5 +1,6 @@
 import React, { useRef, useCallback, useMemo, memo } from 'react';
 import { formatAssetPrice } from '@/lib/assetPriceFormat';
+import { niceYTicks } from '@/lib/niceScale';
 
 export const PRICE_CHART_MARGIN = { top: 12, right: 72, bottom: 24, left: 0 };
 
@@ -89,10 +90,10 @@ export default memo(function SharedCandleChart({
   const volH = plotH * 0.2;
 
   const tickCount = Math.max(3, Math.floor(plotH / 48));
-  const yTicks = Array.from({ length: tickCount }, (_, i) => {
-    const price = adjustedMin + (adjustedRange * i) / (tickCount - 1);
-    return { price, y: toY(price) };
-  });
+  const yTicks = niceYTicks(adjustedMin, adjustedMax, tickCount).map((price) => ({
+    price,
+    y: toY(price),
+  }));
 
   const xTickEvery = Math.max(1, Math.round(80 / spacing));
   const xTicks = chartData

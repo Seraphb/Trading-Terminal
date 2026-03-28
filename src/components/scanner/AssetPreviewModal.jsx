@@ -5,6 +5,7 @@ import { useTheme } from '@/components/ThemeContext';
 import { fetchStockHistory } from '@/api/stockMarketClient';
 import VuManChu from '@/components/terminal/VuManChu';
 import { formatAssetPrice } from '@/lib/assetPriceFormat';
+import { niceYTicks } from '@/lib/niceScale';
 
 const MARGIN = { top: 12, right: 72, bottom: 24, left: 0 };
 const SCAN_TIMEFRAME_BARS_PER_WEEK = {
@@ -75,10 +76,10 @@ function PreviewCandleChart({ chartData, goldSignalTime }) {
   const xTickEvery = Math.max(1, Math.round(chartData.length / 6));
   const goldIndex = chartData.findIndex((candle) => candle.time === goldSignalTime);
 
-  const yTicks = Array.from({ length: 5 }, (_, index) => {
-    const price = priceMin + (range * index) / 4;
-    return { price, y: toY(price) };
-  });
+  const yTicks = niceYTicks(priceMin, priceMax, 5).map((price) => ({
+    price,
+    y: toY(price),
+  }));
 
   return (
     <div ref={containerRef} className="h-full w-full">
@@ -100,9 +101,7 @@ function PreviewCandleChart({ chartData, goldSignalTime }) {
               fontSize="10"
               fontFamily="monospace"
             >
-              {price >= 1000
-                ? price.toLocaleString(undefined, { maximumFractionDigits: 0 })
-                : price.toFixed(2)}
+              {formatAssetPrice(price)}
             </text>
           </g>
         ))}
