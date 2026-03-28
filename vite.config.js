@@ -244,6 +244,43 @@ function anthropicProxyPlugin(apiKey) {
   }
 }
 
+function stockSearchPlugin() {
+  const searchMiddleware = async (req, res) => {
+    if (req.method !== 'GET') { json(res, 405, { message: 'Method not allowed' }); return }
+    try {
+      const url = new URL(req.url, 'http://localhost')
+      const query = url.searchParams.get('q')
+      if (!query || query.length < 1) { json(res, 200, { results: [] }); return }
+
+      const yahooUrl = new URL('https://query2.finance.yahoo.com/v1/finance/search')
+      yahooUrl.searchParams.set('q', query)
+      yahooUrl.searchParams.set('quotesCount', '8')
+      yahooUrl.searchParams.set('newsCount', '0')
+      yahooUrl.searchParams.set('listsCount', '0')
+      yahooUrl.searchParams.set('enableFuzzyQuery', 'true')
+
+      const response = await fetch(yahooUrl, {
+        headers: { 'user-agent': 'Mozilla/5.0', accept: 'application/json' },
+      })
+      if (!response.ok) { json(res, 200, { results: [] }); return }
+
+      const data = await response.json()
+      const results = (data?.quotes || [])
+        .filter(q => q.quoteType === 'EQUITY' || q.quoteType === 'ETF')
+        .map(q => ({ symbol: q.symbol, name: q.shortname || q.longname || '', exchange: q.exchDisp || '' }))
+      json(res, 200, { results })
+    } catch {
+      json(res, 200, { results: [] })
+    }
+  }
+
+  return {
+    name: 'stock-search-proxy',
+    configureServer(server) { server.middlewares.use('/api/stocks/search', searchMiddleware) },
+    configurePreviewServer(server) { server.middlewares.use('/api/stocks/search', searchMiddleware) },
+  }
+}
+
 function stockDataProxyPlugin() {
   const middleware = async (req, res) => {
     if (req.method !== 'GET') {
@@ -293,7 +330,7 @@ export default defineConfig(({ mode }) => {
   const anthropicApiKey = env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY || env.VITE_ANTHROPIC_API_KEY || process.env.VITE_ANTHROPIC_API_KEY
 
   return {
-    plugins: [react(), anthropicProxyPlugin(anthropicApiKey), stockDataProxyPlugin()],
+    plugins: [react(), anthropicProxyPlugin(anthropicApiKey), stockSearchPlugin(), stockDataProxyPlugin()],
     resolve: {
       alias: {
         '@': path.resolve(projectRoot, './src'),
