@@ -37,8 +37,8 @@ export default function StockHeader({ symbol, input, setInput, setSymbol, setPan
   const mutedColor = theme === 'light' ? 'hsl(215,15%,45%)' : '#64748b';
   const inputBg = theme === 'light' ? 'hsl(210,20%,96%)' : 'hsl(217,33%,15%)';
 
-  const filteredSuggestions = input.trim() 
-    ? [input.toUpperCase(), ...STOCK_SUGGESTIONS.filter(s => s.toUpperCase().includes(input.toUpperCase()))].slice(0, 5)
+  const filteredSuggestions = input.trim()
+    ? [...new Set([input.toUpperCase(), ...STOCK_SUGGESTIONS.filter(s => s.toUpperCase().includes(input.toUpperCase()))])].slice(0, 5)
     : [];
   const inWatchlist = watchlistSymbols.includes(symbol);
 
@@ -98,7 +98,7 @@ export default function StockHeader({ symbol, input, setInput, setSymbol, setPan
                 style={{ background: inputBg, border: `1px solid ${border}` }}>
                 {filteredSuggestions.map(s => (
                   <button key={s} type="button"
-                    onClick={() => { setSymbol(s); setInput(s); setPanOffset(0); setShowSuggestions(false); }}
+                    onMouseDown={(e) => { e.preventDefault(); setSymbol(s); setInput(s); setPanOffset(0); setShowSuggestions(false); }}
                     className="w-full px-3 py-2 text-left text-xs hover:bg-blue-500/20 transition-all"
                     style={{ color: textColor }}>
                     {s}
