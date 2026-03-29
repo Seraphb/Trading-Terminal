@@ -519,12 +519,52 @@ function fundamentalsProxyPlugin() {
   }
 }
 
+function stockQuotesPlugin() {
+  const middleware = async (req, res) => {
+    if (req.method !== 'GET') { json(res, 405, { message: 'Method not allowed' }); return }
+    try {
+      const url = new URL(req.url, 'http://localhost')
+      const symbols = url.searchParams.get('symbols')
+      if (!symbols) { json(res, 400, { message: 'Missing symbols' }); return }
+
+      const yahooUrl = new URL('https://query1.finance.yahoo.com/v7/finance/quote')
+      yahooUrl.searchParams.set('symbols', symbols)
+      yahooUrl.searchParams.set('fields', 'symbol,shortName,regularMarketPrice,regularMarketChangePercent,regularMarketVolume,regularMarketDayHigh,regularMarketDayLow,marketCap')
+
+      const r = await fetch(yahooUrl, {
+        headers: { 'user-agent': 'Mozilla/5.0', accept: 'application/json' },
+      })
+      if (!r.ok) { json(res, 502, { message: 'Yahoo Finance error' }); return }
+
+      const data = await r.json()
+      const quotes = (data?.quoteResponse?.result || []).map(q => ({
+        symbol: q.symbol,
+        name: q.shortName || q.symbol,
+        price: q.regularMarketPrice ?? 0,
+        change: q.regularMarketChangePercent ?? 0,
+        volume: q.regularMarketVolume ?? 0,
+        high: q.regularMarketDayHigh ?? 0,
+        low: q.regularMarketDayLow ?? 0,
+        marketCap: q.marketCap ?? 0,
+      }))
+      json(res, 200, { quotes })
+    } catch (err) {
+      json(res, 502, { message: err instanceof Error ? err.message : 'Quotes proxy error' })
+    }
+  }
+  return {
+    name: 'stock-quotes-proxy',
+    configureServer(server) { server.middlewares.use('/api/stocks/quotes', middleware) },
+    configurePreviewServer(server) { server.middlewares.use('/api/stocks/quotes', middleware) },
+  }
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const anthropicApiKey = env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY || env.VITE_ANTHROPIC_API_KEY || process.env.VITE_ANTHROPIC_API_KEY
 
   return {
-    plugins: [react(), anthropicProxyPlugin(anthropicApiKey), stockSearchPlugin(), stockDataProxyPlugin(), fundamentalsProxyPlugin()],
+    plugins: [react(), anthropicProxyPlugin(anthropicApiKey), stockSearchPlugin(), stockDataProxyPlugin(), fundamentalsProxyPlugin(), stockQuotesPlugin()],
     resolve: {
       alias: {
         '@': path.resolve(projectRoot, './src'),
