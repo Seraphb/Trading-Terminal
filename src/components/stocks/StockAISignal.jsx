@@ -20,6 +20,24 @@ async function sendTelegram(token, chatId, text) {
   } catch (e) { console.warn('Telegram error:', e); }
 }
 
+function computeATR(klines, period = 14) {
+  if (klines.length < 2) return 0;
+  const trs = [];
+  for (let i = 1; i < klines.length; i++) {
+    const h = klines[i].high, l = klines[i].low, pc = klines[i - 1].close;
+    trs.push(Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc)));
+  }
+  const slice = trs.slice(-period);
+  return slice.reduce((s, v) => s + v, 0) / slice.length;
+}
+
+function computeSwings(klines, lookback = 20) {
+  const slice = klines.slice(-lookback);
+  const swingHigh = Math.max(...slice.map(k => k.high));
+  const swingLow  = Math.min(...slice.map(k => k.low));
+  return { swingHigh, swingLow };
+}
+
 export default function StockAISignal({ symbol, klines, lastCandle, theme }) {
   const [signal, setSignal] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -39,7 +57,15 @@ export default function StockAISignal({ symbol, klines, lastCandle, theme }) {
       const volume24 = recentKlines.reduce((sum, k) => sum + k.volume, 0);
       const changePercent = ((currentPrice - recentKlines[0]?.open) / recentKlines[0]?.open * 100).toFixed(2);
 
-      const prompt = `You are an expert equity analyst. Analyze ${symbol.toUpperCase()} stock data and provide a precise trading signal.
+      // Quant metrics
+      const atr14 = computeATR(recentKlines, 14);
+      const { swingHigh, swingLow } = computeSwings(recentKlines, 20);
+      const swingRange = swingHigh - swingLow;
+      const fib1272 = currentPrice + swingRange * 1.272;
+      const fib1618 = currentPrice + swingRange * 1.618;
+      const fib2618 = currentPrice + swingRange * 2.618;
+
+      const prompt = `You are an expert equity analyst using advanced quant techniques. Analyze ${symbol.toUpperCase()} stock data and provide a precise trading signal with 3 take-profit levels.
 
 Current price: $${currentPrice.toFixed(2)}
 Period change: ${changePercent}%
@@ -47,17 +73,34 @@ Period High: $${high24.toFixed(2)}
 Period Low: $${low24.toFixed(2)}
 Period Volume: ${(volume24 / 1000000).toFixed(2)}M shares
 
+Pre-computed quant metrics:
+- ATR(14): $${atr14.toFixed(4)} (volatility baseline)
+- 20-bar Swing High: $${swingHigh.toFixed(4)}
+- 20-bar Swing Low: $${swingLow.toFixed(4)}
+- Swing Range: $${swingRange.toFixed(4)}
+- Fib 1.272 extension: $${fib1272.toFixed(4)}
+- Fib 1.618 extension: $${fib1618.toFixed(4)}
+- Fib 2.618 extension: $${fib2618.toFixed(4)}
+
 Recent OHLCV (last 20 candles):
 ${JSON.stringify(priceData.slice(-20))}
 
-Analyze trend, momentum, key support/resistance, volatility, optimal risk/reward.
+Use these techniques to set 3 take-profit levels:
+- TP1 (conservative): 1×ATR above entry or nearest resistance — quick scalp target
+- TP2 (measured move): Fib 1.618 extension or swing measured move target
+- TP3 (max target): Fib 2.618 extension or major structural level
 
 Respond ONLY with valid JSON:
 {
   "direction": "LONG" | "SHORT" | "NEUTRAL",
   "confidence": <0-100>,
   "entry_price": <number>,
-  "target_price": <number>,
+  "tp1": <number>,
+  "tp2": <number>,
+  "tp3": <number>,
+  "tp1_method": "<brief method, e.g. '1×ATR resistance'>",
+  "tp2_method": "<brief method, e.g. 'Fib 1.618 extension'>",
+  "tp3_method": "<brief method, e.g. 'Fib 2.618 structural'>",
   "stop_loss": <number>,
   "risk_reward_ratio": <number>,
   "reasoning": "<2-3 sentence analysis>",
@@ -77,7 +120,7 @@ Respond ONLY with valid JSON:
           messages: [{ role: 'user', content: prompt }],
           response_format: { type: 'json_object' },
           temperature: 0.3,
-          max_tokens: 512,
+          max_tokens: 700,
         }),
       });
 
@@ -90,7 +133,10 @@ Respond ONLY with valid JSON:
         direction: result.direction,
         confidence: result.confidence,
         entry_price: result.entry_price,
-        target_price: result.target_price,
+        tp1: result.tp1,
+        tp2: result.tp2,
+        tp3: result.tp3,
+        target_price: result.tp2,
         stop_loss: result.stop_loss,
         risk_reward_ratio: result.risk_reward_ratio,
         reasoning: result.reasoning,
@@ -106,10 +152,12 @@ Respond ONLY with valid JSON:
       if (tg.botToken && tg.chatId) {
         const dir = result.direction === 'LONG' ? '🟢 LONG' : result.direction === 'SHORT' ? '🔴 SHORT' : '🟡 NEUTRAL';
         const entry = result.entry_price ? `$${result.entry_price.toFixed(2)}` : '—';
-        const tp    = result.target_price ? `$${result.target_price.toFixed(2)}` : '—';
-        const sl    = result.stop_loss    ? `$${result.stop_loss.toFixed(2)}` : '—';
+        const tp1   = result.tp1 ? `$${result.tp1.toFixed(2)}` : '—';
+        const tp2   = result.tp2 ? `$${result.tp2.toFixed(2)}` : '—';
+        const tp3   = result.tp3 ? `$${result.tp3.toFixed(2)}` : '—';
+        const sl    = result.stop_loss ? `$${result.stop_loss.toFixed(2)}` : '—';
         const rr    = result.risk_reward_ratio ? `1:${result.risk_reward_ratio.toFixed(1)}` : '—';
-        const msg = `📈 <b>AI SIGNAL — ${symbol.toUpperCase()} (Stock)</b>\n${dir}  •  Confidence: <b>${result.confidence}%</b>\n\n💰 Entry: <code>${entry}</code>\n🎯 Target: <code>${tp}</code>\n🛑 Stop: <code>${sl}</code>\n⚖️ R:R: <b>${rr}</b>\n\n📝 ${result.reasoning || ''}`;
+        const msg = `📈 <b>AI SIGNAL — ${symbol.toUpperCase()} (Stock)</b>\n${dir}  •  Confidence: <b>${result.confidence}%</b>\n\n💰 Entry: <code>${entry}</code>\n🎯 TP1: <code>${tp1}</code> (${result.tp1_method || ''})\n🎯 TP2: <code>${tp2}</code> (${result.tp2_method || ''})\n🎯 TP3: <code>${tp3}</code> (${result.tp3_method || ''})\n🛑 Stop: <code>${sl}</code>\n⚖️ R:R: <b>${rr}</b>\n\n📝 ${result.reasoning || ''}`;
         sendTelegram(tg.botToken, tg.chatId, msg);
       }
 
@@ -145,6 +193,12 @@ Respond ONLY with valid JSON:
     if (n >= 100)  return '$' + n.toLocaleString(undefined, { maximumFractionDigits: 2 });
     if (n >= 1)    return '$' + n.toFixed(4);
     return '$' + n.toFixed(6);
+  };
+
+  const signedPct = (entry, tp) => {
+    if (!entry || !tp) return null;
+    const pct = ((tp - entry) / entry) * 100;
+    return pct;
   };
 
   return (
@@ -205,7 +259,7 @@ Respond ONLY with valid JSON:
             </div>
             <p className="text-[11px]" style={{ color: mutedColor }}>Analyzing market data…</p>
             <div className="flex gap-1.5">
-              {['Trend', 'Momentum', 'Levels', 'Risk'].map((s, i) => (
+              {['ATR', 'Fib', 'Levels', 'Risk'].map((s, i) => (
                 <span key={s} className="text-[9px] px-2 py-0.5 rounded-full animate-pulse"
                   style={{ background: cardBg, color: mutedColor, animationDelay: `${i * 0.18}s` }}>
                   {s}
@@ -219,7 +273,6 @@ Respond ONLY with valid JSON:
           const cfg = dirCfg[signal.direction] || dirCfg.NEUTRAL;
           const Icon = cfg.icon;
           const entry = signal.entry_price || 0;
-          const tpPct = entry ? (((signal.target_price - entry) / entry) * 100) : 0;
           const slPct = entry ? (((entry - signal.stop_loss) / entry) * 100) : 0;
 
           return (
@@ -259,24 +312,48 @@ Respond ONLY with valid JSON:
                 </div>
               </div>
 
-              {/* Entry / Target / Stop */}
+              {/* Entry / TP1 / TP2 / TP3 / Stop */}
               <div className="rounded-xl overflow-hidden" style={{ border: `1px solid ${borderColor}` }}>
+                {/* Entry */}
                 <div className="flex items-center gap-2.5 px-3 py-2 border-b"
                   style={{ borderColor, background: cardBg }}>
                   <Zap className="w-3.5 h-3.5 flex-shrink-0" style={{ color: mutedColor }} />
                   <span className="text-[10px] w-12 flex-shrink-0" style={{ color: mutedColor }}>Entry</span>
                   <span className="font-mono text-xs font-bold ml-auto" style={{ color: textColor }}>{fmtPrice(signal.entry_price)}</span>
                 </div>
-                <div className="flex items-center gap-2.5 px-3 py-2 border-b"
-                  style={{ borderColor, background: 'rgba(34,197,94,0.05)' }}>
-                  <Target className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
-                  <span className="text-[10px] w-12 flex-shrink-0" style={{ color: mutedColor }}>Target</span>
-                  <div className="ml-auto flex items-center gap-2">
-                    <span className="text-[10px] font-semibold text-emerald-400">+{Math.abs(tpPct).toFixed(2)}%</span>
-                    <span className="font-mono text-xs font-bold text-emerald-400">{fmtPrice(signal.target_price)}</span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2.5 px-3 py-2" style={{ background: 'rgba(239,68,68,0.05)' }}>
+                {/* TP1 */}
+                {[
+                  { key: 'tp1', label: 'TP1', method: signal.tp1_method, color: '#34d399' },
+                  { key: 'tp2', label: 'TP2', method: signal.tp2_method, color: '#22c55e' },
+                  { key: 'tp3', label: 'TP3', method: signal.tp3_method, color: '#16a34a' },
+                ].map(({ key, label, method, color }, idx, arr) => {
+                  const tpVal = signal[key];
+                  const pct = signedPct(entry, tpVal);
+                  return (
+                    <div key={key}
+                      className={`flex items-center gap-2.5 px-3 py-2${idx < arr.length - 1 ? ' border-b' : ''}`}
+                      style={{ borderColor, background: 'rgba(34,197,94,0.04)' }}>
+                      <Target className="w-3.5 h-3.5 flex-shrink-0" style={{ color }} />
+                      <div className="flex flex-col min-w-0" style={{ width: 56 }}>
+                        <span className="text-[10px] font-semibold flex-shrink-0" style={{ color }}>{label}</span>
+                        {method && (
+                          <span className="text-[8px] truncate" style={{ color: mutedColor, maxWidth: 52 }} title={method}>{method}</span>
+                        )}
+                      </div>
+                      <div className="ml-auto flex items-center gap-2">
+                        {pct !== null && (
+                          <span className="text-[10px] font-semibold" style={{ color: pct >= 0 ? color : '#ef4444' }}>
+                            {pct >= 0 ? '+' : ''}{pct.toFixed(2)}%
+                          </span>
+                        )}
+                        <span className="font-mono text-xs font-bold" style={{ color }}>{fmtPrice(tpVal)}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+                {/* Stop */}
+                <div className="flex items-center gap-2.5 px-3 py-2 border-t"
+                  style={{ borderColor, background: 'rgba(239,68,68,0.05)' }}>
                   <Shield className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
                   <span className="text-[10px] w-12 flex-shrink-0" style={{ color: mutedColor }}>Stop</span>
                   <div className="ml-auto flex items-center gap-2">

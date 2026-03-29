@@ -20,6 +20,26 @@ async function sendTelegram(token, chatId, text) {
   } catch (e) { console.warn('Telegram error:', e); }
 }
 
+// ── Quant helpers ─────────────────────────────────────────────────────────────
+function computeATR(klines, period = 14) {
+  if (klines.length < period + 1) return 0;
+  const trs = [];
+  for (let i = 1; i < klines.length; i++) {
+    const h = klines[i].high, l = klines[i].low, pc = klines[i - 1].close;
+    trs.push(Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc)));
+  }
+  const slice = trs.slice(-period);
+  return slice.reduce((a, b) => a + b, 0) / period;
+}
+
+function computeSwings(klines, lookback = 20) {
+  const slice = klines.slice(-lookback);
+  return {
+    swingHigh: Math.max(...slice.map(k => k.high)),
+    swingLow:  Math.min(...slice.map(k => k.low)),
+  };
+}
+
 export default function AISignalPanel({ symbol, klines, ticker }) {
   const [signal, setSignal] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -35,7 +55,15 @@ export default function AISignalPanel({ symbol, klines, ticker }) {
       }));
       const currentPrice = ticker?.price || recentKlines[recentKlines.length - 1]?.close || 0;
 
-      const prompt = `You are an expert quantitative crypto analyst. Analyze this ${symbol.toUpperCase()} market data and provide a precise trading signal.
+      // Pre-compute quant metrics for DeepSeek context
+      const atr14 = computeATR(recentKlines, 14);
+      const { swingHigh, swingLow } = computeSwings(recentKlines, 20);
+      const swingRange = swingHigh - swingLow;
+      const fib1272 = swingLow + swingRange * 1.272;
+      const fib1618 = swingLow + swingRange * 1.618;
+      const fib2618 = swingLow + swingRange * 2.618;
+
+      const prompt = `You are an expert quantitative crypto analyst. Analyze ${symbol.toUpperCase()} and generate a precise trading signal with three take-profit levels using advanced quant techniques.
 
 Current price: $${currentPrice}
 24h Change: ${ticker?.changePercent?.toFixed(2)}%
@@ -43,20 +71,37 @@ Current price: $${currentPrice}
 24h High: $${ticker?.high}
 24h Low: $${ticker?.low}
 
+Pre-computed quant metrics (use these in your analysis):
+- ATR(14): ${atr14.toFixed(6)} (average true range — volatility baseline)
+- 20-bar Swing High: $${swingHigh.toFixed(6)}
+- 20-bar Swing Low: $${swingLow.toFixed(6)}
+- Fib 1.272 extension: $${fib1272.toFixed(6)}
+- Fib 1.618 extension: $${fib1618.toFixed(6)}
+- Fib 2.618 extension: $${fib2618.toFixed(6)}
+
 Recent OHLCV data (last 20 candles):
 ${JSON.stringify(priceData.slice(-20))}
 
-Analyze: trend direction, momentum, key support/resistance, volatility, optimal risk/reward.
+TP methodology to apply:
+- TP1: First resistance / 1×ATR from entry / nearest supply zone (conservative, quick profit)
+- TP2: Fibonacci 1.618 extension or measured move completion (swing target)
+- TP3: Fibonacci 2.618 / major structural level / full measured move (maximum target)
+- Stop loss: Below last swing low (LONG) or above last swing high (SHORT), minimum 0.5×ATR distance
 
-Respond ONLY with valid JSON:
+Respond ONLY with valid JSON (no markdown):
 {
   "direction": "LONG" | "SHORT" | "NEUTRAL",
   "confidence": <0-100>,
   "entry_price": <number>,
-  "target_price": <number>,
+  "tp1": <number>,
+  "tp2": <number>,
+  "tp3": <number>,
   "stop_loss": <number>,
-  "risk_reward_ratio": <number>,
-  "reasoning": "<2-3 sentence analysis>",
+  "risk_reward_ratio": <number based on tp2 as primary target>,
+  "tp1_method": "<brief quant rationale e.g. '1×ATR + first resistance'>",
+  "tp2_method": "<brief quant rationale e.g. 'Fib 1.618 extension'>",
+  "tp3_method": "<brief quant rationale e.g. 'Fib 2.618 / measured move'>",
+  "reasoning": "<2-3 sentence market analysis>",
   "key_levels": { "resistance": <number>, "support": <number> },
   "indicators_summary": {
     "trend": "bullish" | "bearish" | "neutral",
@@ -76,7 +121,7 @@ Respond ONLY with valid JSON:
           messages: [{ role: 'user', content: prompt }],
           response_format: { type: 'json_object' },
           temperature: 0.3,
-          max_tokens: 512,
+          max_tokens: 700,
         }),
       });
 
@@ -84,13 +129,15 @@ Respond ONLY with valid JSON:
       const data = await res.json();
       const result = JSON.parse(data.choices[0].message.content);
 
-      // Save to localStorage so Signals page can show it
       saveSignal({
         symbol: symbol.toUpperCase(),
         direction: result.direction,
         confidence: result.confidence,
         entry_price: result.entry_price,
-        target_price: result.target_price,
+        tp1: result.tp1,
+        tp2: result.tp2,
+        tp3: result.tp3,
+        target_price: result.tp2, // keep legacy field pointing to primary target
         stop_loss: result.stop_loss,
         risk_reward_ratio: result.risk_reward_ratio,
         reasoning: result.reasoning,
@@ -102,16 +149,13 @@ Respond ONLY with valid JSON:
 
       setSignal(result);
 
-      // Send to Telegram if configured
       const tg = getTgConfig();
       if (tg.botToken && tg.chatId) {
         const dir = result.direction === 'LONG' ? '🟢 LONG' : result.direction === 'SHORT' ? '🔴 SHORT' : '🟡 NEUTRAL';
         const sym = symbol.toUpperCase().replace('USDT', '/USDT');
-        const entry = result.entry_price ? `$${result.entry_price.toLocaleString(undefined, { maximumFractionDigits: 4 })}` : '—';
-        const tp    = result.target_price ? `$${result.target_price.toLocaleString(undefined, { maximumFractionDigits: 4 })}` : '—';
-        const sl    = result.stop_loss    ? `$${result.stop_loss.toLocaleString(undefined, { maximumFractionDigits: 4 })}` : '—';
-        const rr    = result.risk_reward_ratio ? `1:${result.risk_reward_ratio.toFixed(1)}` : '—';
-        const msg = `🤖 <b>AI SIGNAL — ${sym}</b>\n${dir}  •  Confidence: <b>${result.confidence}%</b>\n\n💰 Entry: <code>${entry}</code>\n🎯 Target: <code>${tp}</code>\n🛑 Stop: <code>${sl}</code>\n⚖️ R:R: <b>${rr}</b>\n\n📝 ${result.reasoning || ''}`;
+        const fmt = (n) => n ? `$${n.toLocaleString(undefined, { maximumFractionDigits: 4 })}` : '—';
+        const rr  = result.risk_reward_ratio ? `1:${result.risk_reward_ratio.toFixed(1)}` : '—';
+        const msg = `🤖 <b>AI SIGNAL — ${sym}</b>\n${dir}  •  Confidence: <b>${result.confidence}%</b>\n\n💰 Entry: <code>${fmt(result.entry_price)}</code>\n🎯 TP1: <code>${fmt(result.tp1)}</code>  <i>${result.tp1_method || ''}</i>\n🎯 TP2: <code>${fmt(result.tp2)}</code>  <i>${result.tp2_method || ''}</i>\n🎯 TP3: <code>${fmt(result.tp3)}</code>  <i>${result.tp3_method || ''}</i>\n🛑 Stop: <code>${fmt(result.stop_loss)}</code>\n⚖️ R:R: <b>${rr}</b>\n\n📝 ${result.reasoning || ''}`;
         sendTelegram(tg.botToken, tg.chatId, msg);
       }
     } catch (err) {
@@ -122,13 +166,15 @@ Respond ONLY with valid JSON:
     }
   }, [symbol, klines, ticker]);
 
-  /* ── helpers ── */
   const fmtPrice = (n) => {
     if (!n) return '—';
     if (n >= 1000) return '$' + n.toLocaleString(undefined, { maximumFractionDigits: 2 });
     if (n >= 1) return '$' + n.toFixed(4);
     return '$' + n.toFixed(6);
   };
+
+  const pctFromEntry = (entry, target) =>
+    entry && target ? ((target - entry) / entry * 100).toFixed(2) : '0.00';
 
   const dirCfg = {
     LONG:    { icon: TrendingUp,   color: '#22c55e', bg: 'rgba(34,197,94,0.12)',  border: 'rgba(34,197,94,0.3)',  label: 'LONG'    },
@@ -160,9 +206,7 @@ Respond ONLY with valid JSON:
             color: '#c084fc',
           }}
         >
-          {loading
-            ? <Loader2 className="w-3 h-3 animate-spin" />
-            : <RefreshCw className="w-3 h-3" />}
+          {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
           {loading ? 'Analyzing…' : 'Generate'}
         </button>
       </div>
@@ -170,7 +214,6 @@ Respond ONLY with valid JSON:
       {/* Body */}
       <div className="flex-1 overflow-y-auto">
 
-        {/* Error */}
         {signal?.error && (
           <div className="flex flex-col items-center justify-center h-full gap-2 px-3">
             <Brain className="w-6 h-6 text-red-500/40" />
@@ -179,7 +222,6 @@ Respond ONLY with valid JSON:
           </div>
         )}
 
-        {/* Empty */}
         {!signal && !loading && (
           <div className="flex flex-col items-center justify-center h-full gap-3 px-3">
             <div className="w-14 h-14 rounded-full flex items-center justify-center"
@@ -194,12 +236,10 @@ Respond ONLY with valid JSON:
           </div>
         )}
 
-        {/* Loading */}
         {loading && (
           <div className="flex flex-col items-center justify-center h-full gap-4 px-3">
             <div className="relative w-14 h-14">
-              <div className="absolute inset-0 rounded-full animate-ping"
-                style={{ background: 'rgba(168,85,247,0.15)' }} />
+              <div className="absolute inset-0 rounded-full animate-ping" style={{ background: 'rgba(168,85,247,0.15)' }} />
               <div className="relative w-14 h-14 rounded-full flex items-center justify-center"
                 style={{ background: 'rgba(168,85,247,0.12)', border: '1px solid rgba(168,85,247,0.3)' }}>
                 <Loader2 className="w-6 h-6 text-purple-400 animate-spin" />
@@ -207,7 +247,7 @@ Respond ONLY with valid JSON:
             </div>
             <p className="text-[11px] text-slate-400">Analyzing market data…</p>
             <div className="flex gap-1.5">
-              {['Trend', 'Momentum', 'Levels', 'Risk'].map((s, i) => (
+              {['ATR', 'Fib', 'Levels', 'Risk'].map((s, i) => (
                 <span key={s} className="text-[9px] px-2 py-0.5 rounded-full animate-pulse"
                   style={{ background: 'hsl(217,33%,20%)', color: '#64748b', animationDelay: `${i * 0.18}s` }}>
                   {s}
@@ -217,15 +257,18 @@ Respond ONLY with valid JSON:
           </div>
         )}
 
-        {/* Signal result */}
         {signal && !signal.error && !loading && (() => {
           const cfg = dirCfg[signal.direction] || dirCfg.NEUTRAL;
           const Icon = cfg.icon;
-
-          // Calculate TP / SL percentages from entry
           const entry = signal.entry_price || 0;
-          const tpPct = entry ? (((signal.target_price - entry) / entry) * 100) : 0;
-          const slPct = entry ? (((signal.entry_price - signal.stop_loss) / entry) * 100) : 0;
+          const slPct = entry ? Math.abs(((entry - signal.stop_loss) / entry) * 100) : 0;
+          const isLong = signal.direction === 'LONG';
+
+          const tpRows = [
+            { label: 'TP1', price: signal.tp1, method: signal.tp1_method, color: '#34d399', bg: 'rgba(52,211,153,0.05)' },
+            { label: 'TP2', price: signal.tp2, method: signal.tp2_method, color: '#22c55e', bg: 'rgba(34,197,94,0.07)' },
+            { label: 'TP3', price: signal.tp3, method: signal.tp3_method, color: '#16a34a', bg: 'rgba(22,163,74,0.09)' },
+          ];
 
           return (
             <div className="p-2.5 space-y-2">
@@ -239,15 +282,10 @@ Respond ONLY with valid JSON:
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-extrabold tracking-wide" style={{ color: cfg.color }}>
-                      {cfg.label}
-                    </span>
-                    <span className="text-[10px] text-slate-500">
-                      {symbol.toUpperCase().replace('USDT', '/USDT')}
-                    </span>
+                    <span className="text-sm font-extrabold tracking-wide" style={{ color: cfg.color }}>{cfg.label}</span>
+                    <span className="text-[10px] text-slate-500">{symbol.toUpperCase().replace('USDT', '/USDT')}</span>
                   </div>
                   <div className="flex items-center gap-2 mt-1">
-                    {/* Confidence bar */}
                     <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.08)' }}>
                       <div className="h-full rounded-full transition-all"
                         style={{
@@ -255,9 +293,7 @@ Respond ONLY with valid JSON:
                           background: signal.confidence >= 70 ? '#22c55e' : signal.confidence >= 45 ? '#eab308' : '#ef4444',
                         }} />
                     </div>
-                    <span className="text-[10px] font-bold text-slate-300 tabular-nums flex-shrink-0">
-                      {signal.confidence}%
-                    </span>
+                    <span className="text-[10px] font-bold text-slate-300 tabular-nums flex-shrink-0">{signal.confidence}%</span>
                   </div>
                 </div>
                 <div className="flex flex-col items-end flex-shrink-0">
@@ -268,43 +304,49 @@ Respond ONLY with valid JSON:
                 </div>
               </div>
 
-              {/* Entry / Target / Stop — vertical layout */}
+              {/* Entry + TP1/TP2/TP3 + Stop */}
               <div className="rounded-xl overflow-hidden" style={{ border: '1px solid hsl(217,33%,22%)' }}>
                 {/* Entry */}
                 <div className="flex items-center gap-2.5 px-3 py-2 border-b"
                   style={{ borderColor: 'hsl(217,33%,20%)', background: 'hsl(222,47%,12%)' }}>
                   <Zap className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-                  <span className="text-[10px] text-slate-500 w-12 flex-shrink-0">Entry</span>
-                  <span className="font-mono text-xs font-bold text-white ml-auto">{fmtPrice(signal.entry_price)}</span>
+                  <span className="text-[10px] text-slate-500 w-10 flex-shrink-0">Entry</span>
+                  <span className="font-mono text-xs font-bold text-white ml-auto">{fmtPrice(entry)}</span>
                 </div>
-                {/* Target */}
-                <div className="flex items-center gap-2.5 px-3 py-2 border-b"
-                  style={{ borderColor: 'hsl(217,33%,20%)', background: 'rgba(34,197,94,0.05)' }}>
-                  <Target className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
-                  <span className="text-[10px] text-slate-500 w-12 flex-shrink-0">Target</span>
-                  <div className="ml-auto flex items-center gap-2">
-                    <span className="text-[10px] font-semibold"
-                      style={{ color: '#22c55e' }}>
-                      +{Math.abs(tpPct).toFixed(2)}%
-                    </span>
-                    <span className="font-mono text-xs font-bold text-emerald-400">{fmtPrice(signal.target_price)}</span>
-                  </div>
-                </div>
+
+                {/* TP1 / TP2 / TP3 */}
+                {tpRows.map((tp, i) => {
+                  const pct = pctFromEntry(entry, tp.price);
+                  const signed = isLong ? `+${Math.abs(pct)}%` : `-${Math.abs(pct)}%`;
+                  return (
+                    <div key={tp.label} className="flex items-center gap-2 px-3 py-1.5 border-b"
+                      style={{ borderColor: 'hsl(217,33%,20%)', background: tp.bg }}>
+                      <Target className="w-3 h-3 flex-shrink-0" style={{ color: tp.color }} />
+                      <span className="text-[10px] font-bold flex-shrink-0" style={{ color: tp.color, width: 26 }}>{tp.label}</span>
+                      {tp.method && (
+                        <span className="text-[8px] text-slate-600 flex-1 truncate" title={tp.method}>{tp.method}</span>
+                      )}
+                      <div className="flex items-center gap-1.5 ml-auto flex-shrink-0">
+                        <span className="text-[9px] font-semibold" style={{ color: tp.color }}>{signed}</span>
+                        <span className="font-mono text-[11px] font-bold" style={{ color: tp.color }}>{fmtPrice(tp.price)}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+
                 {/* Stop Loss */}
                 <div className="flex items-center gap-2.5 px-3 py-2"
                   style={{ background: 'rgba(239,68,68,0.05)' }}>
                   <Shield className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
-                  <span className="text-[10px] text-slate-500 w-12 flex-shrink-0">Stop</span>
+                  <span className="text-[10px] text-slate-500 w-10 flex-shrink-0">Stop</span>
                   <div className="ml-auto flex items-center gap-2">
-                    <span className="text-[10px] font-semibold text-red-400">
-                      -{Math.abs(slPct).toFixed(2)}%
-                    </span>
+                    <span className="text-[10px] font-semibold text-red-400">-{slPct.toFixed(2)}%</span>
                     <span className="font-mono text-xs font-bold text-red-400">{fmtPrice(signal.stop_loss)}</span>
                   </div>
                 </div>
               </div>
 
-              {/* R:R ratio + key levels */}
+              {/* R:R + key levels */}
               <div className="grid grid-cols-3 gap-1.5">
                 <div className="rounded-lg px-2.5 py-2 text-center"
                   style={{ background: 'hsl(222,47%,12%)', border: '1px solid hsl(217,33%,22%)' }}>
@@ -317,16 +359,12 @@ Respond ONLY with valid JSON:
                 <div className="rounded-lg px-2.5 py-2 text-center"
                   style={{ background: 'hsl(222,47%,12%)', border: '1px solid hsl(217,33%,22%)' }}>
                   <div className="text-[9px] text-slate-500 mb-0.5">Resistance</div>
-                  <div className="text-[11px] font-bold font-mono text-red-400">
-                    {fmtPrice(signal.key_levels?.resistance)}
-                  </div>
+                  <div className="text-[11px] font-bold font-mono text-red-400">{fmtPrice(signal.key_levels?.resistance)}</div>
                 </div>
                 <div className="rounded-lg px-2.5 py-2 text-center"
                   style={{ background: 'hsl(222,47%,12%)', border: '1px solid hsl(217,33%,22%)' }}>
                   <div className="text-[9px] text-slate-500 mb-0.5">Support</div>
-                  <div className="text-[11px] font-bold font-mono text-emerald-400">
-                    {fmtPrice(signal.key_levels?.support)}
-                  </div>
+                  <div className="text-[11px] font-bold font-mono text-emerald-400">{fmtPrice(signal.key_levels?.support)}</div>
                 </div>
               </div>
 
@@ -338,9 +376,7 @@ Respond ONLY with valid JSON:
                       style={{ background: 'hsl(222,47%,12%)', border: '1px solid hsl(217,33%,22%)' }}>
                       <div className="text-[9px] text-slate-600 capitalize mb-0.5">{key}</div>
                       <div className="text-[10px] font-semibold capitalize"
-                        style={{ color: indicatorColor[val] || '#94a3b8' }}>
-                        {val}
-                      </div>
+                        style={{ color: indicatorColor[val] || '#94a3b8' }}>{val}</div>
                     </div>
                   ))}
                 </div>
