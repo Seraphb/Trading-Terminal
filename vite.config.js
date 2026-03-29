@@ -325,12 +325,206 @@ function stockDataProxyPlugin() {
   }
 }
 
+// ── SEC EDGAR helpers ──────────────────────────────────────────────────────────
+let _edgarTickerCache = null
+const _edgarConceptCache = new Map()
+const EDGAR_UA = 'TradingDashboard/1.0 contact@localhost'
+
+async function getCIK(symbol) {
+  if (!_edgarTickerCache) {
+    const r = await fetch('https://www.sec.gov/files/company_tickers.json', {
+      headers: { 'user-agent': EDGAR_UA, accept: 'application/json' },
+    })
+    const raw = await r.json()
+    _edgarTickerCache = {}
+    for (const entry of Object.values(raw)) {
+      _edgarTickerCache[entry.ticker.toUpperCase()] = String(entry.cik_str).padStart(10, '0')
+    }
+  }
+  return _edgarTickerCache[symbol.toUpperCase()] || null
+}
+
+async function fetchEDGARConcept(cik, concept) {
+  const key = `${cik}/${concept}`
+  if (_edgarConceptCache.has(key)) return _edgarConceptCache.get(key)
+  try {
+    const r = await fetch(
+      `https://data.sec.gov/api/xbrl/companyconcept/CIK${cik}/us-gaap/${concept}.json`,
+      { headers: { 'user-agent': EDGAR_UA, accept: 'application/json' } }
+    )
+    if (!r.ok) return null
+    const data = await r.json()
+    const result = data?.units?.USD ?? data?.units?.shares ?? null
+    _edgarConceptCache.set(key, result)
+    setTimeout(() => _edgarConceptCache.delete(key), 4 * 60 * 60 * 1000)
+    return result
+  } catch { return null }
+}
+
+// Deduplicated annual 10-K values, most recent first.
+// Takes MAX value per fiscal year end to get the consolidated total (not a segment line).
+function deduplicatedAnnual(units, n = 5) {
+  if (!Array.isArray(units)) return []
+  const byEnd = new Map()
+  units
+    .filter(u => (u.form === '10-K' || u.form === '10-K/A') && u.fp === 'FY' && u.val > 0)
+    .forEach(u => {
+      if (!byEnd.has(u.end) || Math.abs(u.val) > Math.abs(byEnd.get(u.end).val)) {
+        byEnd.set(u.end, u)
+      }
+    })
+  return [...byEnd.values()]
+    .sort((a, b) => new Date(b.end) - new Date(a.end))
+    .slice(0, n)
+    .map(u => ({ val: u.val, end: u.end }))
+}
+
+function latestAnnual(units) {
+  return deduplicatedAnnual(units, 1)[0]?.val ?? null
+}
+
+function latestShares(units) {
+  if (!Array.isArray(units)) return null
+  return [...units].sort((a, b) => new Date(b.end) - new Date(a.end))[0]?.val ?? null
+}
+
+// Compute beta of symbol vs SPY from weekly closes over 1 year
+function computeBeta(stockCloses, spyCloses) {
+  const minLen = Math.min(stockCloses.length, spyCloses.length)
+  if (minLen < 10) return 1.0
+  const sr = [], mr = []
+  for (let i = 1; i < minLen; i++) {
+    if (stockCloses[i - 1] && spyCloses[i - 1]) {
+      sr.push((stockCloses[i] - stockCloses[i - 1]) / stockCloses[i - 1])
+      mr.push((spyCloses[i] - spyCloses[i - 1]) / spyCloses[i - 1])
+    }
+  }
+  if (sr.length < 5) return 1.0
+  const n = sr.length
+  const ms = sr.reduce((a, b) => a + b, 0) / n
+  const mm = mr.reduce((a, b) => a + b, 0) / n
+  let cov = 0, varM = 0
+  for (let i = 0; i < n; i++) {
+    cov  += (sr[i] - ms) * (mr[i] - mm)
+    varM += (mr[i] - mm) ** 2
+  }
+  if (varM === 0) return 1.0
+  return Math.max(0.3, Math.min(3.0, cov / varM))
+}
+
+async function fetchWeeklyCloses(symbol) {
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1wk&range=2y`
+    const r = await fetch(url, { headers: { 'user-agent': 'Mozilla/5.0', accept: 'application/json' } })
+    if (!r.ok) return []
+    const data = await r.json()
+    return (data?.chart?.result?.[0]?.indicators?.quote?.[0]?.close || []).filter(Number.isFinite)
+  } catch { return [] }
+}
+
+function fundamentalsProxyPlugin() {
+  const middleware = async (req, res) => {
+    if (req.method !== 'GET') { json(res, 405, { message: 'Method not allowed' }); return }
+    try {
+      const reqUrl = new URL(req.url, 'http://localhost')
+      const symbol = reqUrl.searchParams.get('symbol')
+      if (!symbol) { json(res, 400, { message: 'Missing symbol' }); return }
+
+      // 1. Resolve EDGAR CIK
+      const cik = await getCIK(symbol.toUpperCase())
+      if (!cik) {
+        json(res, 404, { message: `No SEC EDGAR listing for ${symbol}. DCF only works for US-listed stocks.` })
+        return
+      }
+
+      // 2. Fetch EDGAR concepts + beta data + company name in parallel
+      const [
+        ocfUnits, capexUnits,
+        sharesUnits, sharesBasicUnits,
+        debtUnits, cashUnits,
+        revUnits, revAltUnits,
+        stockCloses, spyCloses, nameData,
+      ] = await Promise.all([
+        fetchEDGARConcept(cik, 'NetCashProvidedByUsedInOperatingActivities'),
+        fetchEDGARConcept(cik, 'PaymentsToAcquirePropertyPlantAndEquipment'),
+        fetchEDGARConcept(cik, 'CommonStockSharesOutstanding'),
+        fetchEDGARConcept(cik, 'WeightedAverageNumberOfSharesOutstandingBasic'),
+        fetchEDGARConcept(cik, 'LongTermDebtNoncurrent'),
+        fetchEDGARConcept(cik, 'CashAndCashEquivalentsAtCarryingValue'),
+        fetchEDGARConcept(cik, 'Revenues'),
+        fetchEDGARConcept(cik, 'RevenueFromContractWithCustomerExcludingAssessedTax'),
+        fetchWeeklyCloses(symbol),
+        fetchWeeklyCloses('SPY'),
+        fetch(`https://data.sec.gov/submissions/CIK${cik}.json`, {
+          headers: { 'user-agent': EDGAR_UA },
+        }).then(r => r.ok ? r.json() : null).catch(() => null),
+      ])
+
+      // 3. Current price from Yahoo chart
+      let currentPrice = null
+      try {
+        const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=5d`
+        const r = await fetch(url, { headers: { 'user-agent': 'Mozilla/5.0', accept: 'application/json' } })
+        if (r.ok) {
+          const d = await r.json()
+          const closes = (d?.chart?.result?.[0]?.indicators?.quote?.[0]?.close || []).filter(Number.isFinite)
+          if (closes.length) currentPrice = closes[closes.length - 1]
+        }
+      } catch {}
+
+      // 4. Build FCF history (most recent first)
+      const ocfRows    = deduplicatedAnnual(ocfUnits,   5)
+      const capexRows  = deduplicatedAnnual(capexUnits, 5)
+      const fcfHistory = ocfRows.map((row, i) => row.val - Math.abs(capexRows[i]?.val ?? 0))
+
+      // 5. Shares history (annual, most recent first) for FCF/share growth
+      const sharesRows   = deduplicatedAnnual(sharesUnits ?? sharesBasicUnits, 5)
+      const sharesLatest = latestShares(sharesUnits) ?? latestShares(sharesBasicUnits)
+      const sharesHistory = sharesRows.map(r => r.val)
+
+      // 6. Revenue history — merge both revenue concepts, MAX per FY end date
+      const allRevUnits = [...(revUnits || []), ...(revAltUnits || [])]
+      const revRows    = deduplicatedAnnual(allRevUnits, 5)
+      const revHistory = revRows.map(r => r.val)
+
+      // 7. Debt & cash
+      const totalDebt = latestAnnual(debtUnits) ?? 0
+      const totalCash = latestAnnual(cashUnits) ?? 0
+
+      // 8. Beta from weekly returns vs SPY
+      const beta = computeBeta(stockCloses, spyCloses)
+
+      json(res, 200, {
+        ticker:            symbol.toUpperCase(),
+        company_name:      nameData?.name || symbol,
+        current_price:     currentPrice,
+        shares_outstanding: sharesLatest,
+        shares_history:    sharesHistory,   // most recent first
+        fcf_history:       fcfHistory,      // most recent first
+        fcf_ttm:           fcfHistory[0] ?? null,
+        revenue_history:   revHistory,      // most recent first
+        total_debt:        totalDebt,
+        total_cash:        totalCash,
+        beta,
+        source: 'SEC EDGAR',
+      })
+    } catch (err) {
+      json(res, 502, { message: err instanceof Error ? err.message : 'Fundamentals proxy error' })
+    }
+  }
+  return {
+    name: 'fundamentals-proxy',
+    configureServer(server) { server.middlewares.use('/api/stocks/fundamentals', middleware) },
+    configurePreviewServer(server) { server.middlewares.use('/api/stocks/fundamentals', middleware) },
+  }
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const anthropicApiKey = env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY || env.VITE_ANTHROPIC_API_KEY || process.env.VITE_ANTHROPIC_API_KEY
 
   return {
-    plugins: [react(), anthropicProxyPlugin(anthropicApiKey), stockSearchPlugin(), stockDataProxyPlugin()],
+    plugins: [react(), anthropicProxyPlugin(anthropicApiKey), stockSearchPlugin(), stockDataProxyPlugin(), fundamentalsProxyPlugin()],
     resolve: {
       alias: {
         '@': path.resolve(projectRoot, './src'),

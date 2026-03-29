@@ -1057,3 +1057,380 @@ export function renderVolumeProfile(chartData, { toY, plotW, plotH, marginTop, a
 
   return <g className="vpvr-overlay">{elements}</g>;
 }
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// LIQUIDITY SWEEP OVERLAY
+// Detects swing highs/lows that get swept (wick through, close back inside).
+// Marks stop-hunt events where price wicks past a key level then reverses.
+// ════════════════════════════════════════════════════════════════════════════
+
+function findSwingPoints(data, lookback = 10) {
+  const swingHighs = [];
+  const swingLows = [];
+  for (let i = lookback; i < data.length - lookback; i++) {
+    let isHigh = true, isLow = true;
+    for (let j = 1; j <= lookback; j++) {
+      if (data[i].high <= data[i - j].high || data[i].high <= data[i + j].high) isHigh = false;
+      if (data[i].low >= data[i - j].low || data[i].low >= data[i + j].low) isLow = false;
+      if (!isHigh && !isLow) break;
+    }
+    if (isHigh) swingHighs.push({ idx: i, price: data[i].high });
+    if (isLow) swingLows.push({ idx: i, price: data[i].low });
+  }
+  return { swingHighs, swingLows };
+}
+
+export function renderLiquiditySweep(chartData, { toX, toY, plotW, plotH, marginTop, spacing }) {
+  const realData = chartData.filter(d => !d.isBlank);
+  if (realData.length < 25) return null;
+
+  const { swingHighs, swingLows } = findSwingPoints(realData, 5);
+  const elements = [];
+  const MIN_BARS_AFTER = 2;
+
+  // Sweep of swing highs (bearish sweep — wick above, close below)
+  for (const sh of swingHighs) {
+    for (let j = sh.idx + MIN_BARS_AFTER; j < realData.length; j++) {
+      const candle = realData[j];
+      if (candle.high > sh.price && candle.close < sh.price && candle.open < sh.price) {
+        const x = toX(j);
+        const y = toY(candle.high);
+        elements.push(
+          <g key={`sweep-h-${sh.idx}-${j}`}>
+            <line x1={toX(sh.idx)} y1={toY(sh.price)} x2={x} y2={toY(sh.price)}
+              stroke="rgba(239,68,68,0.35)" strokeWidth={0.8} strokeDasharray="3,3" />
+            <circle cx={x} cy={y} r={4} fill="none" stroke="rgba(239,68,68,0.8)" strokeWidth={1.5} />
+            <text x={x + 6} y={y - 2} fill="rgba(239,68,68,0.8)" fontSize={8}
+              fontFamily="'JetBrains Mono', monospace" fontWeight="700">SWEEP</text>
+          </g>
+        );
+        break;
+      }
+      if (j - sh.idx > 60) break;
+    }
+  }
+
+  // Sweep of swing lows (bullish sweep — wick below, close above)
+  for (const sl of swingLows) {
+    for (let j = sl.idx + MIN_BARS_AFTER; j < realData.length; j++) {
+      const candle = realData[j];
+      if (candle.low < sl.price && candle.close > sl.price && candle.open > sl.price) {
+        const x = toX(j);
+        const y = toY(candle.low);
+        elements.push(
+          <g key={`sweep-l-${sl.idx}-${j}`}>
+            <line x1={toX(sl.idx)} y1={toY(sl.price)} x2={x} y2={toY(sl.price)}
+              stroke="rgba(16,185,129,0.35)" strokeWidth={0.8} strokeDasharray="3,3" />
+            <circle cx={x} cy={y} r={4} fill="none" stroke="rgba(16,185,129,0.8)" strokeWidth={1.5} />
+            <text x={x + 6} y={y + 10} fill="rgba(16,185,129,0.8)" fontSize={8}
+              fontFamily="'JetBrains Mono', monospace" fontWeight="700">SWEEP</text>
+          </g>
+        );
+        break;
+      }
+      if (j - sl.idx > 60) break;
+    }
+  }
+
+  return elements.length > 0 ? <g className="liq-sweep-overlay">{elements}</g> : null;
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// INVERSE FAIR VALUE GAPS (IFVG) OVERLAY
+// When a regular FVG gets fully filled AND price closes through it,
+// the zone inverts: bullish FVG → bearish IFVG (resistance),
+// bearish FVG → bullish IFVG (support).
+// ════════════════════════════════════════════════════════════════════════════
+
+export function renderInverseFVG(chartData, { toX, toY, plotW, plotH, marginTop, spacing }) {
+  if (chartData.length < 3) return null;
+
+  const elements = [];
+  const candleW = Math.max(2, spacing * 0.6);
+
+  // Detect all FVGs first
+  const gaps = [];
+  for (let i = 2; i < chartData.length; i++) {
+    const twoBarsAgo = chartData[i - 2];
+    const prev = chartData[i - 1];
+    const curr = chartData[i];
+    const isBearishMiddle = prev.open > prev.close;
+
+    if (isBearishMiddle && curr.high < twoBarsAgo.low) {
+      gaps.push({ idx: i, top: twoBarsAgo.low, bottom: curr.high, mid: (twoBarsAgo.low + curr.high) / 2, type: 'bull' });
+    } else if (!isBearishMiddle && curr.low > twoBarsAgo.high) {
+      gaps.push({ idx: i, top: curr.low, bottom: twoBarsAgo.high, mid: (curr.low + twoBarsAgo.high) / 2, type: 'bear' });
+    }
+  }
+
+  // Check for inversion: FVG fully filled + price continues through
+  for (const gap of gaps) {
+    let fillBar = null;
+    let inversionBar = null;
+
+    for (let j = gap.idx + 1; j < chartData.length; j++) {
+      const c = chartData[j];
+      if (gap.type === 'bull') {
+        // Bullish FVG inverts when price drops through the bottom
+        if (c.close < gap.bottom && fillBar == null) { fillBar = j; }
+        if (fillBar != null && c.close < gap.bottom) { inversionBar = j; break; }
+      } else {
+        // Bearish FVG inverts when price rallies through the top
+        if (c.close > gap.top && fillBar == null) { fillBar = j; }
+        if (fillBar != null && c.close > gap.top) { inversionBar = j; break; }
+      }
+      if (j - gap.idx > 80) break;
+    }
+
+    if (inversionBar == null) continue;
+
+    // Render the IFVG zone (inverted colors)
+    const x1 = toX(inversionBar) - candleW / 2;
+    const x2 = toX(chartData.length - 1) + spacing * 2;
+    const yTop = toY(gap.top);
+    const yBot = toY(gap.bottom);
+    const gapH = yBot - yTop;
+    if (gapH < 1) continue;
+
+    // Check if IFVG was respected (price bounced from zone)
+    let respected = false;
+    for (let j = inversionBar + 1; j < chartData.length; j++) {
+      const c = chartData[j];
+      if (gap.type === 'bull') {
+        // Inverted to bearish → acts as resistance
+        if (c.high >= gap.bottom && c.high <= gap.top && c.close < gap.bottom) { respected = true; break; }
+      } else {
+        // Inverted to bullish → acts as support
+        if (c.low <= gap.top && c.low >= gap.bottom && c.close > gap.top) { respected = true; break; }
+      }
+      if (j - inversionBar > 40) break;
+    }
+
+    const isInvertedBull = gap.type === 'bear'; // bearish FVG → bullish IFVG
+    const color = isInvertedBull ? '16,185,129' : '239,68,68';
+
+    elements.push(
+      <g key={`ifvg-${gap.idx}`}>
+        <rect x={x1} y={yTop} width={x2 - x1} height={gapH}
+          fill={`rgba(${color},0.08)`} stroke={`rgba(${color},0.30)`}
+          strokeWidth={0.8} strokeDasharray="4,3" />
+        <line x1={x1} x2={x2} y1={toY(gap.mid)} y2={toY(gap.mid)}
+          stroke={`rgba(255,255,255,0.12)`} strokeWidth={0.5} strokeDasharray="2,3" />
+        <rect x={x1} y={yTop} width={2} height={gapH} fill={`rgba(${color},0.6)`} />
+        <text x={x1 + 5} y={toY(gap.mid) - 3} fill={`rgba(${color},0.7)`}
+          fontSize={8} fontFamily="'JetBrains Mono', monospace" fontWeight="700">
+          IFVG{respected ? ' ✓' : ''}
+        </text>
+      </g>
+    );
+  }
+
+  return elements.length > 0 ? <g className="ifvg-overlay">{elements}</g> : null;
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// AMD MODEL OVERLAY (Accumulation → Manipulation → Distribution)
+// Detects smart-money three-phase cycles:
+//   1. Accumulation: tight range consolidation (low ATR)
+//   2. Manipulation: false breakout (stop hunt) from the range
+//   3. Distribution: true move in the opposite direction of the fake-out
+// ════════════════════════════════════════════════════════════════════════════
+
+export function renderAMDModel(chartData, { toX, toY, plotW, plotH, marginTop, spacing }) {
+  const realData = chartData.filter(d => !d.isBlank);
+  if (realData.length < 40) return null;
+
+  const elements = [];
+  const RANGE_LEN = 15;     // bars to define accumulation range
+  const ATR_PERIOD = 14;
+  const MANIP_LOOK = 5;     // bars to check for manipulation after range
+  const DIST_LOOK = 15;     // bars to check for distribution after manipulation
+
+  // Compute ATR
+  const atrs = [];
+  for (let i = 0; i < realData.length; i++) {
+    if (i === 0) { atrs.push(realData[i].high - realData[i].low); continue; }
+    const tr = Math.max(
+      realData[i].high - realData[i].low,
+      Math.abs(realData[i].high - realData[i - 1].close),
+      Math.abs(realData[i].low - realData[i - 1].close)
+    );
+    atrs.push(tr);
+  }
+  const atrSma = [];
+  for (let i = 0; i < atrs.length; i++) {
+    if (i < ATR_PERIOD - 1) { atrSma.push(atrs[i]); continue; }
+    let sum = 0;
+    for (let j = i - ATR_PERIOD + 1; j <= i; j++) sum += atrs[j];
+    atrSma.push(sum / ATR_PERIOD);
+  }
+
+  // Scan for AMD patterns
+  for (let rangeEnd = RANGE_LEN; rangeEnd < realData.length - MANIP_LOOK - 2; rangeEnd++) {
+    const rangeStart = rangeEnd - RANGE_LEN;
+
+    // 1. Accumulation: find range high/low and check if ATR is compressed
+    let rangeHigh = -Infinity, rangeLow = Infinity;
+    let rangeATRsum = 0;
+    for (let j = rangeStart; j <= rangeEnd; j++) {
+      rangeHigh = Math.max(rangeHigh, realData[j].high);
+      rangeLow = Math.min(rangeLow, realData[j].low);
+      rangeATRsum += atrSma[j] ?? atrs[j];
+    }
+    const rangeATR = rangeATRsum / (RANGE_LEN + 1);
+    const rangeSpread = rangeHigh - rangeLow;
+
+    // Range must be tight: spread < 2x ATR (compressed)
+    if (rangeSpread > rangeATR * 3.0) continue;
+
+    // 2. Manipulation: false breakout in next MANIP_LOOK bars
+    let manipBar = -1, manipDir = 0; // +1 = fake breakout UP, -1 = fake breakout DOWN
+    for (let j = rangeEnd + 1; j <= Math.min(rangeEnd + MANIP_LOOK, realData.length - 1); j++) {
+      const c = realData[j];
+      // Fake breakout above: wick above range high, close back inside
+      if (c.high > rangeHigh + rangeATR * 0.1 && c.close < rangeHigh && c.close >= rangeLow) {
+        manipBar = j; manipDir = 1; break;
+      }
+      // Fake breakout below: wick below range low, close back inside
+      if (c.low < rangeLow - rangeATR * 0.1 && c.close > rangeLow && c.close <= rangeHigh) {
+        manipBar = j; manipDir = -1; break;
+      }
+    }
+    if (manipBar < 0) continue;
+
+    // 3. Distribution: true move opposite to fake-out
+    let distBar = -1;
+    for (let j = manipBar + 1; j <= Math.min(manipBar + DIST_LOOK, realData.length - 1); j++) {
+      const c = realData[j];
+      if (manipDir === 1 && c.close < rangeLow) { distBar = j; break; }  // faked up → real move down
+      if (manipDir === -1 && c.close > rangeHigh) { distBar = j; break; } // faked down → real move up
+    }
+    if (distBar < 0) continue;
+
+    const isBullish = manipDir === -1; // faked down → real move up = bullish AMD
+    const color = isBullish ? '16,185,129' : '239,68,68';
+
+    // Render: accumulation range box, manipulation arrow, distribution arrow
+    const x1 = toX(rangeStart);
+    const x2 = toX(rangeEnd);
+    const xManip = toX(manipBar);
+    const xDist = toX(distBar);
+    const yHigh = toY(rangeHigh);
+    const yLow = toY(rangeLow);
+
+    elements.push(
+      <g key={`amd-${rangeStart}`}>
+        {/* Accumulation range */}
+        <rect x={x1} y={yHigh} width={x2 - x1} height={yLow - yHigh}
+          fill={`rgba(${color},0.06)`} stroke={`rgba(${color},0.25)`}
+          strokeWidth={0.8} strokeDasharray="3,3" />
+        <text x={x1 + 3} y={yHigh - 3} fill={`rgba(${color},0.6)`}
+          fontSize={7} fontFamily="'JetBrains Mono', monospace" fontWeight="700">A</text>
+
+        {/* Manipulation marker */}
+        <circle cx={xManip} cy={manipDir === 1 ? toY(realData[manipBar].high) : toY(realData[manipBar].low)}
+          r={3.5} fill="none" stroke="rgba(251,191,36,0.8)" strokeWidth={1.5} />
+        <text x={xManip + 5} y={manipDir === 1 ? toY(realData[manipBar].high) - 3 : toY(realData[manipBar].low) + 11}
+          fill="rgba(251,191,36,0.7)" fontSize={7} fontFamily="'JetBrains Mono', monospace" fontWeight="700">M</text>
+
+        {/* Distribution marker */}
+        <line x1={xManip} y1={toY(realData[manipBar].close)} x2={xDist} y2={toY(realData[distBar].close)}
+          stroke={`rgba(${color},0.5)`} strokeWidth={1.2} />
+        <text x={xDist + 5} y={toY(realData[distBar].close) + 3}
+          fill={`rgba(${color},0.7)`} fontSize={7} fontFamily="'JetBrains Mono', monospace" fontWeight="700">D</text>
+      </g>
+    );
+
+    // Skip ahead past this pattern to avoid overlapping detections
+    rangeEnd = distBar + RANGE_LEN;
+  }
+
+  return elements.length > 0 ? <g className="amd-overlay">{elements}</g> : null;
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// ORDER FLOW OVERLAY (Buy/Sell Volume Delta)
+// Estimates buy vs sell volume using close position within bar range.
+// Renders delta bars at chart bottom + cumulative delta line.
+// ════════════════════════════════════════════════════════════════════════════
+
+export function renderOrderFlow(chartData, { toX, toY, plotW, plotH, marginTop, spacing }) {
+  if (chartData.length < 10) return null;
+
+  const elements = [];
+  const zoneH = plotH * 0.15;
+  const chartBottom = marginTop + plotH;
+  const zoneTop = chartBottom - zoneH;
+  const candleW = Math.max(2, spacing * 0.6);
+
+  // Compute delta per bar: buy vol = V * (C - L) / (H - L), sell vol = V - buy vol
+  const deltas = chartData.map(c => {
+    const range = c.high - c.low;
+    if (range <= 0 || !c.volume) return 0;
+    const buyRatio = (c.close - c.low) / range;
+    const buyVol = c.volume * buyRatio;
+    const sellVol = c.volume * (1 - buyRatio);
+    return buyVol - sellVol;
+  });
+
+  // Cumulative delta
+  const cumDelta = [];
+  let cum = 0;
+  for (const d of deltas) { cum += d; cumDelta.push(cum); }
+
+  const maxAbsDelta = Math.max(...deltas.map(Math.abs)) || 1;
+  const maxAbsCum = Math.max(...cumDelta.map(Math.abs)) || 1;
+  const zeroY = zoneTop + zoneH / 2;
+  const halfH = zoneH / 2 * 0.85;
+
+  // Background
+  elements.push(
+    <rect key="of-bg" x={0} y={zoneTop} width={plotW} height={zoneH}
+      fill="rgba(0,0,0,0.20)" />
+  );
+  elements.push(
+    <line key="of-zero" x1={0} x2={plotW} y1={zeroY} y2={zeroY}
+      stroke="rgba(255,255,255,0.10)" strokeWidth={0.5} />
+  );
+
+  // Delta bars
+  for (let i = 0; i < chartData.length; i++) {
+    const d = deltas[i];
+    if (Math.abs(d) < maxAbsDelta * 0.005) continue;
+    const barH = (Math.abs(d) / maxAbsDelta) * halfH;
+    const y = d >= 0 ? zeroY - barH : zeroY;
+    elements.push(
+      <rect key={`of-${i}`} x={toX(i) - candleW / 2} y={y}
+        width={candleW} height={Math.max(barH, 0.5)}
+        fill={d >= 0 ? 'rgba(0,230,118,0.50)' : 'rgba(255,82,82,0.50)'} />
+    );
+  }
+
+  // Cumulative delta line
+  const points = chartData.map((_, i) => {
+    const y = zeroY - (cumDelta[i] / maxAbsCum) * halfH;
+    return `${toX(i)},${y}`;
+  }).join(' ');
+  elements.push(
+    <polyline key="of-cum" points={points} fill="none"
+      stroke="rgba(99,179,237,0.7)" strokeWidth={1.2} />
+  );
+
+  // Label
+  const lastDelta = deltas[deltas.length - 1];
+  const lastCum = cumDelta[cumDelta.length - 1];
+  elements.push(
+    <text key="of-label" x={8} y={zoneTop + 11}
+      fill="rgba(99,179,237,0.55)" fontSize={9}
+      fontFamily="'JetBrains Mono', monospace" fontWeight="600">
+      ORDER FLOW
+      <tspan fill={lastCum >= 0 ? 'rgba(16,185,129,0.7)' : 'rgba(239,68,68,0.7)'}>{' '}Cum Δ {lastCum >= 0 ? '+' : ''}{(lastCum / 1e6).toFixed(1)}M</tspan>
+    </text>
+  );
+
+  return <g className="order-flow-overlay">{elements}</g>;
+}

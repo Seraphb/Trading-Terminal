@@ -3,7 +3,9 @@ import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const supabase = supabaseUrl && supabaseAnonKey
+  ? createClient(supabaseUrl, supabaseAnonKey)
+  : null;
 
 // ── Anthropic LLM integration ─────────────────────────────────────────────────
 /**
@@ -78,6 +80,7 @@ async function InvokeLLM({ prompt, response_json_schema, add_context_from_intern
 // ── Signal entity (Supabase) ──────────────────────────────────────────────────
 const Signal = {
   async list(orderBy = '-created_date', limit = 50) {
+    if (!supabase) return [];
     const column = orderBy.startsWith('-') ? orderBy.slice(1) : orderBy;
     const ascending = !orderBy.startsWith('-');
     const { data, error } = await supabase
@@ -90,6 +93,7 @@ const Signal = {
   },
 
   async create(payload) {
+    if (!supabase) throw new Error('Supabase is not configured');
     const { data, error } = await supabase
       .from('signals')
       .insert([{ ...payload, created_date: new Date().toISOString() }])
@@ -100,6 +104,7 @@ const Signal = {
   },
 
   async update(id, payload) {
+    if (!supabase) throw new Error('Supabase is not configured');
     const { data, error } = await supabase
       .from('signals')
       .update(payload)
@@ -111,6 +116,7 @@ const Signal = {
   },
 
   async delete(id) {
+    if (!supabase) throw new Error('Supabase is not configured');
     const { error } = await supabase.from('signals').delete().eq('id', id);
     if (error) throw error;
     return true;

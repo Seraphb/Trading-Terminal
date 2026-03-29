@@ -8,7 +8,7 @@ import DrawingToolbar from '@/components/charts/DrawingToolbar';
 import DrawingLayer from '@/components/charts/DrawingLayer';
 import MovingAverageControls from '@/components/charts/MovingAverageControls';
 import OverlayControls from '@/components/charts/OverlayControls';
-import { renderFibonacciOverlay, renderOpenInterestOverlay, renderLiquidationHeatmap, renderFairValueGaps, renderMACDOverlay, renderVolumeProfile } from '@/components/charts/chartOverlays';
+import { renderFibonacciOverlay, renderOpenInterestOverlay, renderLiquidationHeatmap, renderFairValueGaps, renderMACDOverlay, renderVolumeProfile, renderLiquiditySweep, renderInverseFVG, renderAMDModel, renderOrderFlow } from '@/components/charts/chartOverlays';
 import { CHART_INTERVALS, CHART_DATE_RANGES, DATE_RANGES_BY_INTERVAL, DEFAULT_DATE_RANGE_BY_INTERVAL, rangeToCount } from '@/components/charts/chartConfig';
 import { createDefaultMovingAverages, createMovingAverage, enrichChartDataWithMovingAverages, getMovingAverageLineConfig } from '@/components/charts/movingAverages';
 import { formatAssetPrice } from '@/lib/assetPriceFormat';
@@ -21,11 +21,13 @@ const StockVMC = lazy(() => import('../stocks/StockVMC'));
 const WyckoffIndicator = lazy(() => import('./WyckoffIndicator'));
 const FundingRatePanel = lazy(() => import('./FundingRatePanel'));
 const SniperStrategyModal = lazy(() => import('./SniperStrategyModal'));
+const VolumeWeightedRSI = lazy(() => import('./VolumeWeightedRSI'));
 
 const AVAILABLE_INDICATORS = [
   { key: 'vumanchu',     label: 'VuManChu Cipher B', desc: 'Momentum divergence oscillator' },
   { key: 'wyckoff',      label: 'Wyckoff Flow',       desc: 'Smart money accumulation / distribution' },
   { key: 'fundingRate',  label: 'Funding Rate',       desc: 'Perp futures 8h funding — green = negative (bullish), red = positive (bearish). Crypto only.', cryptoOnly: true },
+  { key: 'vwrsi',        label: 'Volume Weighted RSI', desc: 'RSI weighted by relative volume — filters low-conviction moves' },
 ];
 
 function IndicatorFallback() {
@@ -467,6 +469,22 @@ export default function PriceChart({ klines, loading, symbol, interval, dateRang
       const r = renderVolumeProfile(chartData, coords);
       if (r) elements.push(<React.Fragment key="vpvr-overlay">{r}</React.Fragment>);
     }
+    if (activeOverlays.includes('liquiditySweep')) {
+      const r = renderLiquiditySweep(chartData, coords);
+      if (r) elements.push(<React.Fragment key="liq-sweep">{r}</React.Fragment>);
+    }
+    if (activeOverlays.includes('ifvg')) {
+      const r = renderInverseFVG(chartData, coords);
+      if (r) elements.push(<React.Fragment key="ifvg-overlay">{r}</React.Fragment>);
+    }
+    if (activeOverlays.includes('amd')) {
+      const r = renderAMDModel(chartData, coords);
+      if (r) elements.push(<React.Fragment key="amd-overlay">{r}</React.Fragment>);
+    }
+    if (activeOverlays.includes('orderFlow')) {
+      const r = renderOrderFlow(chartData, coords);
+      if (r) elements.push(<React.Fragment key="order-flow">{r}</React.Fragment>);
+    }
     return elements.length > 0 ? <>{elements}</> : null;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [overlayStableKey, activeOverlays, overlayOiData]);
@@ -843,6 +861,11 @@ export default function PriceChart({ klines, loading, symbol, interval, dateRang
                   {key === 'fundingRate' && (
                     <Suspense fallback={<IndicatorFallback />}>
                       <FundingRatePanel fundingData={fundingData} klines={klines} visibleRange={[startIdx, endIdx]} rightPad={rightPad} />
+                    </Suspense>
+                  )}
+                  {key === 'vwrsi' && (
+                    <Suspense fallback={<IndicatorFallback />}>
+                      <VolumeWeightedRSI klines={isStock ? klinesWithTimeStr : klines} visibleRange={[startIdx, endIdx]} rightPad={rightPad} inspectionX={inspectionGuide?.plotX ?? null} />
                     </Suspense>
                   )}
                 </div>

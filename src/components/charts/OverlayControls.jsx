@@ -44,6 +44,30 @@ const OVERLAYS = [
     desc: 'Visible range volume profile — POC, Value Area Hi/Lo',
     color: '#fbbf24',
   },
+  {
+    key: 'liquiditySweep',
+    label: 'Liquidity Sweep',
+    desc: 'Swing high/low stop hunts — wick through, close back inside',
+    color: '#f43f5e',
+  },
+  {
+    key: 'ifvg',
+    label: 'Inverse FVG (IFVG)',
+    desc: 'Fair value gaps that inverted — former support becomes resistance',
+    color: '#8b5cf6',
+  },
+  {
+    key: 'amd',
+    label: 'AMD Model',
+    desc: 'Accumulation → Manipulation → Distribution smart money cycles',
+    color: '#06b6d4',
+  },
+  {
+    key: 'orderFlow',
+    label: 'Order Flow',
+    desc: 'Buy/sell volume delta + cumulative delta line',
+    color: '#63b3ed',
+  },
 ];
 
 export { OVERLAYS };
@@ -95,7 +119,7 @@ export default function OverlayControls({ activeOverlays, setActiveOverlays, isC
           <div className="mb-1 px-2 py-1 text-[9px] font-semibold uppercase tracking-wider text-slate-600">
             Price Chart Overlays
           </div>
-          <div className="max-h-[176px] overflow-y-auto overscroll-contain" style={{ scrollbarWidth: 'thin', scrollbarColor: 'hsl(217,33%,30%) transparent' }}>
+          <div className="max-h-[300px] overflow-y-auto overscroll-contain" style={{ scrollbarWidth: 'thin', scrollbarColor: 'hsl(217,33%,30%) transparent' }}>
           {OVERLAYS.map((overlay) => {
             const isActive = activeOverlays.includes(overlay.key);
             const isDisabled = overlay.cryptoOnly && !isCrypto;
