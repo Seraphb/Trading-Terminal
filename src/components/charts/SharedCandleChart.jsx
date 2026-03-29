@@ -30,6 +30,23 @@ function CrosshairLayer({ plotW, plotH, marginTop, crosshairStroke, crosshairBad
   );
 }
 
+// ── Measure layer: long-press 1.5s to activate, shows % with green/red shading ──
+function MeasureLayer({ plotW, plotH, marginTop }) {
+  return (
+    <g style={{ pointerEvents: 'none', visibility: 'hidden' }} data-measure-root="">
+      {/* Shaded area between anchor and cursor */}
+      <rect data-m="shade" x={0} y={0} width={0} height={0} opacity={0.12} />
+      {/* Horizontal anchor line */}
+      <line data-m="anchor-line" x1={0} x2={0} y1={0} y2={0} stroke="#3b82f6" strokeWidth={1} strokeDasharray="2,2" opacity={0.5} />
+      {/* Percentage badge */}
+      <rect data-m="pct-bg" x={0} y={0} width={90} height={24} rx={4} fill="#1e293b" stroke="#3b82f6" strokeWidth={1} opacity={0.95} />
+      <text data-m="pct-text" x={0} y={0} textAnchor="middle" fontSize={12} fontFamily="'JetBrains Mono', monospace" fontWeight="700" fill="#60a5fa" />
+      {/* Anchor dot */}
+      <circle data-m="anchor-dot" cx={0} cy={0} r={4} fill="#3b82f6" stroke="#fff" strokeWidth={1.5} />
+    </g>
+  );
+}
+
 export default memo(function SharedCandleChart({
   chartData,
   priceMin,
@@ -43,6 +60,7 @@ export default memo(function SharedCandleChart({
   priceZoom = 1,
   isDragging = false,
   dragAxisRef = null,
+  measureActiveRef = null,
   onCrosshairChange,
   axisPriceFormatter = formatChartAxisPrice,
   lastPriceFormatter = formatChartAxisPrice,
@@ -61,6 +79,9 @@ export default memo(function SharedCandleChart({
   topOverlay = null,
 }) {
   const svgRef = useRef(null);
+  const measureAnchorRef = useRef(null); // { price, x, y } — set after 1.5s hold
+  const longPressTimerRef = useRef(null);
+  const longPressStartRef = useRef(null); // { clientX, clientY } — to detect movement
   const crosshairPriceFormatterRef = useRef(crosshairPriceFormatter);
   crosshairPriceFormatterRef.current = crosshairPriceFormatter;
   const onCrosshairChangeRef = useRef(onCrosshairChange);
@@ -109,6 +130,71 @@ export default memo(function SharedCandleChart({
   const lastPriceColor = lastCandle?.close >= lastCandle?.open ? bullColor : bearColor;
   const yToPrice = (y) => adjustedMin + (1 - (y - PRICE_CHART_MARGIN.top) / plotH) * adjustedRange;
 
+  // ── Direct DOM measure update (no React re-render) ──
+  const updateMeasureDOM = (svgEl, mouseX, mouseY, curPrice) => {
+    const root = svgEl.querySelector('[data-measure-root]');
+    if (!root) return;
+    const anchor = measureAnchorRef.current;
+
+    if (!anchor || mouseX == null) {
+      root.style.visibility = 'hidden';
+      return;
+    }
+
+    root.style.visibility = 'visible';
+    const pctChange = ((curPrice - anchor.price) / anchor.price) * 100;
+    const isUp = pctChange >= 0;
+    const pctStr = `${isUp ? '+' : ''}${pctChange.toFixed(2)}%`;
+    const color = isUp ? '#10b981' : '#ef4444';
+
+    const shade = root.querySelector('[data-m="shade"]');
+    const dot = root.querySelector('[data-m="anchor-dot"]');
+    const anchorLine = root.querySelector('[data-m="anchor-line"]');
+    const pctBg = root.querySelector('[data-m="pct-bg"]');
+    const pctText = root.querySelector('[data-m="pct-text"]');
+
+    // Shaded area: full width, between anchor Y and cursor Y
+    const shadeTop = Math.min(anchor.y, mouseY);
+    const shadeH = Math.abs(mouseY - anchor.y);
+    shade.setAttribute('x', PRICE_CHART_MARGIN.left);
+    shade.setAttribute('y', shadeTop);
+    shade.setAttribute('width', plotW);
+    shade.setAttribute('height', shadeH);
+    shade.setAttribute('fill', color);
+
+    dot.setAttribute('cx', anchor.x);
+    dot.setAttribute('cy', anchor.y);
+
+    anchorLine.setAttribute('x1', PRICE_CHART_MARGIN.left);
+    anchorLine.setAttribute('x2', PRICE_CHART_MARGIN.left + plotW);
+    anchorLine.setAttribute('y1', anchor.y);
+    anchorLine.setAttribute('y2', anchor.y);
+
+    // Position badge near cursor
+    const badgeX = mouseX + 12;
+    const badgeY = mouseY - 30;
+    pctBg.setAttribute('x', badgeX);
+    pctBg.setAttribute('y', badgeY);
+    pctBg.setAttribute('stroke', color);
+
+    pctText.setAttribute('x', badgeX + 45);
+    pctText.setAttribute('y', badgeY + 16);
+    pctText.setAttribute('fill', color);
+    pctText.textContent = pctStr;
+  };
+
+  const clearMeasure = () => {
+    measureAnchorRef.current = null;
+    if (measureActiveRef) measureActiveRef.current = false;
+    if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
+    longPressStartRef.current = null;
+    const svgEl = svgRef.current;
+    if (svgEl) {
+      const root = svgEl.querySelector('[data-measure-root]');
+      if (root) root.style.visibility = 'hidden';
+    }
+  };
+
   // ── Direct DOM crosshair update (no React re-render) ──
   const updateCrosshairDOM = (svgEl, mouseX, mouseY, priceStr, timeStr) => {
     const root = svgEl.querySelector('[data-crosshair-root]');
@@ -149,6 +235,18 @@ export default memo(function SharedCandleChart({
   const handleMouseMove = (event) => {
     const svgEl = svgRef.current;
     if (!svgEl) return;
+
+    // Cancel long-press if user moved more than 5px (they're dragging)
+    if (longPressTimerRef.current && longPressStartRef.current) {
+      const dx = event.clientX - longPressStartRef.current.clientX;
+      const dy = event.clientY - longPressStartRef.current.clientY;
+      if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+        clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+        longPressStartRef.current = null;
+      }
+    }
+
     const rect = svgEl.getBoundingClientRect();
     const mouseX = event.clientX - rect.left;
     const mouseY = event.clientY - rect.top;
@@ -170,13 +268,55 @@ export default memo(function SharedCandleChart({
     const priceStr = crosshairPriceFormatterRef.current(price);
 
     updateCrosshairDOM(svgEl, mouseX, mouseY, priceStr, timeStr);
+    updateMeasureDOM(svgEl, mouseX, mouseY, price);
     onCrosshairChangeRef.current?.({ x: mouseX, y: mouseY, price, time: timeStr, index: idx, plotX: mouseX });
   };
 
   const handleMouseLeave = () => {
     const svgEl = svgRef.current;
-    if (svgEl) updateCrosshairDOM(svgEl, null);
+    if (svgEl) {
+      updateCrosshairDOM(svgEl, null);
+      updateMeasureDOM(svgEl, null, null, null);
+    }
     onCrosshairChangeRef.current?.(null);
+    // Cancel long-press if mouse leaves
+    if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
+  };
+
+  // Long-press: hold 1.5s to activate measure mode
+  const handleMeasureMouseDown = (event) => {
+    const svgEl = svgRef.current;
+    if (!svgEl) return;
+    const rect = svgEl.getBoundingClientRect();
+    const mouseX = event.clientX - rect.left;
+    const mouseY = event.clientY - rect.top;
+    const inPlotArea =
+      mouseX >= PRICE_CHART_MARGIN.left &&
+      mouseX <= PRICE_CHART_MARGIN.left + plotW &&
+      mouseY >= PRICE_CHART_MARGIN.top &&
+      mouseY <= PRICE_CHART_MARGIN.top + plotH;
+    if (!inPlotArea) return;
+
+    longPressStartRef.current = { clientX: event.clientX, clientY: event.clientY };
+    longPressTimerRef.current = setTimeout(() => {
+      // Only activate if mouse hasn't moved much (not a drag)
+      const start = longPressStartRef.current;
+      if (!start) return;
+      const price = yToPrice(mouseY);
+      measureAnchorRef.current = { price, x: mouseX, y: mouseY };
+      if (measureActiveRef) measureActiveRef.current = true;
+      longPressTimerRef.current = null;
+    }, 850);
+  };
+
+  const handleMeasureMouseUp = () => {
+    // If measure is active, clear it on release
+    if (measureAnchorRef.current) {
+      clearMeasure();
+    }
+    // Cancel pending long-press timer
+    if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
+    longPressStartRef.current = null;
   };
 
   return (
@@ -186,6 +326,8 @@ export default memo(function SharedCandleChart({
       height={height}
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
+      onMouseDown={handleMeasureMouseDown}
+      onMouseUp={handleMeasureMouseUp}
       style={{
         display: 'block',
         background: 'transparent',
@@ -354,6 +496,9 @@ export default memo(function SharedCandleChart({
           {label}
         </text>
       ))}
+
+      {/* Measure: long-press % change tool */}
+      <MeasureLayer plotW={plotW} plotH={plotH} marginTop={PRICE_CHART_MARGIN.top} />
 
       {/* Crosshair: rendered once, updated via direct DOM manipulation */}
       <CrosshairLayer

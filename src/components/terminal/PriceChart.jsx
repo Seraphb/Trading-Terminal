@@ -126,6 +126,7 @@ export default function PriceChart({ klines, loading, symbol, interval, dateRang
   const [drawings, setDrawings] = useState([]);
 
   // ── Interaction refs ────────────────────────────────────────────────────
+  const measureActiveRef     = useRef(false);
   const isDragging           = useRef(false);
   const dragAxisRef          = useRef(null);
   const dragStartX           = useRef(0);
@@ -258,6 +259,7 @@ export default function PriceChart({ klines, loading, symbol, interval, dateRang
 
   // ── Mouse handlers ──────────────────────────────────────────────────────
   const onMouseDown = useCallback((e) => {
+    if (measureActiveRef.current) return; // don't drag while measuring
     const tag = e.target.tagName;
     if (!['svg', 'rect', 'line', 'g', 'polygon', 'polyline', 'text', 'path', 'circle'].includes(tag)) return;
     isDragging.current           = true;
@@ -272,7 +274,7 @@ export default function PriceChart({ klines, loading, symbol, interval, dateRang
   }, []);
 
   const onMouseMove = useCallback((e) => {
-    if (!isDragging.current) return;
+    if (!isDragging.current || measureActiveRef.current) return;
     // Snapshot values synchronously (React synthetic event is pooled)
     const cx = e.clientX, cy = e.clientY;
     if (rafId.current) return; // skip if a frame is already pending
@@ -713,6 +715,7 @@ export default function PriceChart({ klines, loading, symbol, interval, dateRang
             priceZoom={priceZoom}
             isDragging={isDragging.current}
             dragAxisRef={dragAxisRef.current}
+            measureActiveRef={measureActiveRef}
             onCrosshairChange={setInspectionGuide}
             axisPriceFormatter={formatAxisPrice}
             lastPriceFormatter={formatAxisPrice}
