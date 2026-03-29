@@ -306,7 +306,7 @@ export default memo(function SharedCandleChart({
       measureAnchorRef.current = { price, x: mouseX, y: mouseY };
       if (measureActiveRef) measureActiveRef.current = true;
       longPressTimerRef.current = null;
-    }, 850);
+    }, 750);
   };
 
   const handleMeasureMouseUp = () => {
