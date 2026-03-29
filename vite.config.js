@@ -519,34 +519,45 @@ function fundamentalsProxyPlugin() {
   }
 }
 
+async function fetchOneQuote(symbol) {
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=5d`
+    const r = await fetch(url, { headers: { 'user-agent': 'Mozilla/5.0', accept: 'application/json' } })
+    if (!r.ok) return null
+    const data = await r.json()
+    const result = data?.chart?.result?.[0]
+    if (!result) return null
+    const meta = result.meta
+    const closes = result.indicators?.quote?.[0]?.close?.filter(v => v != null) ?? []
+    const price = meta.regularMarketPrice ?? closes[closes.length - 1] ?? 0
+    const prevClose = closes.length >= 2 ? closes[closes.length - 2] : price
+    const change = prevClose > 0 ? ((price - prevClose) / prevClose) * 100 : 0
+    const high = meta.regularMarketDayHigh ?? price
+    const low  = meta.regularMarketDayLow  ?? price
+    return {
+      symbol,
+      name: symbol,
+      price,
+      change: Math.round(change * 100) / 100,
+      volume: meta.regularMarketVolume ?? 0,
+      high,
+      low,
+      marketCap: meta.marketCap ?? 0,
+    }
+  } catch { return null }
+}
+
 function stockQuotesPlugin() {
   const middleware = async (req, res) => {
     if (req.method !== 'GET') { json(res, 405, { message: 'Method not allowed' }); return }
     try {
       const url = new URL(req.url, 'http://localhost')
-      const symbols = url.searchParams.get('symbols')
-      if (!symbols) { json(res, 400, { message: 'Missing symbols' }); return }
+      const symbols = (url.searchParams.get('symbols') || '').split(',').map(s => s.trim()).filter(Boolean)
+      if (!symbols.length) { json(res, 400, { message: 'Missing symbols' }); return }
 
-      const yahooUrl = new URL('https://query1.finance.yahoo.com/v7/finance/quote')
-      yahooUrl.searchParams.set('symbols', symbols)
-      yahooUrl.searchParams.set('fields', 'symbol,shortName,regularMarketPrice,regularMarketChangePercent,regularMarketVolume,regularMarketDayHigh,regularMarketDayLow,marketCap')
-
-      const r = await fetch(yahooUrl, {
-        headers: { 'user-agent': 'Mozilla/5.0', accept: 'application/json' },
-      })
-      if (!r.ok) { json(res, 502, { message: 'Yahoo Finance error' }); return }
-
-      const data = await r.json()
-      const quotes = (data?.quoteResponse?.result || []).map(q => ({
-        symbol: q.symbol,
-        name: q.shortName || q.symbol,
-        price: q.regularMarketPrice ?? 0,
-        change: q.regularMarketChangePercent ?? 0,
-        volume: q.regularMarketVolume ?? 0,
-        high: q.regularMarketDayHigh ?? 0,
-        low: q.regularMarketDayLow ?? 0,
-        marketCap: q.marketCap ?? 0,
-      }))
+      // Fetch all in parallel (Yahoo Finance chart endpoint — no auth required)
+      const results = await Promise.all(symbols.map(fetchOneQuote))
+      const quotes = results.filter(Boolean)
       json(res, 200, { quotes })
     } catch (err) {
       json(res, 502, { message: err instanceof Error ? err.message : 'Quotes proxy error' })
@@ -564,6 +575,7 @@ export default defineConfig(({ mode }) => {
   const anthropicApiKey = env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY || env.VITE_ANTHROPIC_API_KEY || process.env.VITE_ANTHROPIC_API_KEY
 
   return {
+    server: { port: parseInt(process.env.PORT ?? '5173'), strictPort: false },
     plugins: [react(), anthropicProxyPlugin(anthropicApiKey), stockSearchPlugin(), stockDataProxyPlugin(), fundamentalsProxyPlugin(), stockQuotesPlugin()],
     resolve: {
       alias: {
