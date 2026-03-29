@@ -68,6 +68,12 @@ const OVERLAYS = [
     desc: 'Buy/sell volume delta + cumulative delta line',
     color: '#63b3ed',
   },
+  {
+    key: 'bollingerBands',
+    label: 'Bollinger Bands',
+    desc: 'SMA(20) ± 2σ — dynamic support/resistance bands',
+    color: '#60a5fa',
+  },
 ];
 
 export { OVERLAYS };

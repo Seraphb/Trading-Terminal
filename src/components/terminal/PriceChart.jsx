@@ -8,7 +8,7 @@ import DrawingToolbar from '@/components/charts/DrawingToolbar';
 import DrawingLayer from '@/components/charts/DrawingLayer';
 import MovingAverageControls from '@/components/charts/MovingAverageControls';
 import OverlayControls from '@/components/charts/OverlayControls';
-import { renderFibonacciOverlay, renderOpenInterestOverlay, renderLiquidationHeatmap, renderFairValueGaps, renderMACDOverlay, renderVolumeProfile, renderLiquiditySweep, renderInverseFVG, renderAMDModel, renderOrderFlow } from '@/components/charts/chartOverlays';
+import { renderFibonacciOverlay, renderOpenInterestOverlay, renderLiquidationHeatmap, renderFairValueGaps, renderMACDOverlay, renderVolumeProfile, renderLiquiditySweep, renderInverseFVG, renderAMDModel, renderOrderFlow, renderBollingerBands } from '@/components/charts/chartOverlays';
 import { CHART_INTERVALS, CHART_DATE_RANGES, DATE_RANGES_BY_INTERVAL, DEFAULT_DATE_RANGE_BY_INTERVAL, rangeToCount } from '@/components/charts/chartConfig';
 import { createDefaultMovingAverages, createMovingAverage, enrichChartDataWithMovingAverages, getMovingAverageLineConfig } from '@/components/charts/movingAverages';
 import { formatAssetPrice } from '@/lib/assetPriceFormat';
@@ -486,6 +486,10 @@ export default function PriceChart({ klines, loading, symbol, interval, dateRang
     if (activeOverlays.includes('orderFlow')) {
       const r = renderOrderFlow(chartData, coords);
       if (r) elements.push(<React.Fragment key="order-flow">{r}</React.Fragment>);
+    }
+    if (activeOverlays.includes('bollingerBands')) {
+      const r = renderBollingerBands(chartData, coords);
+      if (r) elements.push(<React.Fragment key="bb-overlay">{r}</React.Fragment>);
     }
     return elements.length > 0 ? <>{elements}</> : null;
   // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -1434,3 +1434,81 @@ export function renderOrderFlow(chartData, { toX, toY, plotW, plotH, marginTop, 
 
   return <g className="order-flow-overlay">{elements}</g>;
 }
+
+// ── Bollinger Bands (20, 2) ───────────────────────────────────────────────
+export function renderBollingerBands(chartData, { toX, toY, plotW, plotH, marginTop, spacing }) {
+  const period = 20;
+  if (chartData.length < period) return null;
+
+  const closes = chartData.map(c => c.close);
+  const upper = [], middle = [], lower = [];
+
+  for (let i = 0; i < closes.length; i++) {
+    if (i < period - 1) { upper.push(null); middle.push(null); lower.push(null); continue; }
+    const slice = closes.slice(i - period + 1, i + 1);
+    const sma = slice.reduce((s, v) => s + v, 0) / period;
+    const variance = slice.reduce((s, v) => s + (v - sma) ** 2, 0) / period;
+    const std = Math.sqrt(variance);
+    upper.push(sma + 2 * std);
+    middle.push(sma);
+    lower.push(sma - 2 * std);
+  }
+
+  const buildPath = (values) => {
+    let d = '';
+    for (let i = 0; i < values.length; i++) {
+      if (values[i] === null) continue;
+      const x = toX(i), y = toY(values[i]);
+      d += d === '' ? `M${x},${y}` : ` L${x},${y}`;
+    }
+    return d;
+  };
+
+  // Fill band area (upper → lower backward)
+  const fillPoints = [];
+  for (let i = 0; i < upper.length; i++) {
+    if (upper[i] !== null) fillPoints.push(`${toX(i)},${toY(upper[i])}`);
+  }
+  for (let i = upper.length - 1; i >= 0; i--) {
+    if (lower[i] !== null) fillPoints.push(`${toX(i)},${toY(lower[i])}`);
+  }
+
+  const upperPath  = buildPath(upper);
+  const midPath    = buildPath(middle);
+  const lowerPath  = buildPath(lower);
+
+  // Last band values for label
+  const lastUpper  = upper[upper.length - 1];
+  const lastMid    = middle[middle.length - 1];
+  const lastLower  = lower[lower.length - 1];
+  const lastX      = toX(chartData.length - 1);
+
+  return (
+    <g className="bollinger-bands-overlay">
+      {/* Band fill */}
+      {fillPoints.length > 2 && (
+        <polygon
+          points={fillPoints.join(' ')}
+          fill="rgba(99,179,237,0.06)"
+        />
+      )}
+      {/* Upper band */}
+      <path d={upperPath} fill="none" stroke="rgba(99,179,237,0.55)" strokeWidth={1} />
+      {/* Middle SMA */}
+      <path d={midPath}   fill="none" stroke="rgba(251,191,36,0.65)"  strokeWidth={1} strokeDasharray="4 3" />
+      {/* Lower band */}
+      <path d={lowerPath} fill="none" stroke="rgba(99,179,237,0.55)" strokeWidth={1} />
+      {/* Labels at right edge */}
+      {lastUpper !== null && (
+        <>
+          <text x={lastX + 4} y={toY(lastUpper) + 3} fill="rgba(99,179,237,0.7)" fontSize={8}
+            fontFamily="'JetBrains Mono', monospace">U</text>
+          <text x={lastX + 4} y={toY(lastMid)   + 3} fill="rgba(251,191,36,0.7)"  fontSize={8}
+            fontFamily="'JetBrains Mono', monospace">B</text>
+          <text x={lastX + 4} y={toY(lastLower) + 3} fill="rgba(99,179,237,0.7)" fontSize={8}
+            fontFamily="'JetBrains Mono', monospace">L</text>
+        </>
+      )}
+    </g>
+  );
+}
