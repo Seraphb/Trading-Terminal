@@ -68,17 +68,21 @@ const SCAN_TIMEFRAMES = {
 };
 
 function getCryptoBarCount(interval, lookbackWeeks) {
-  const warmupBars = 80;
+  // Warmup must match indicator history depth so the WT2 extreme-oversold touch
+  // lookup (findLastIndex v <= -75) sees the same history as the VuManChu indicator.
+  // Indicator loads: 1w→260 bars, 1d→1825 bars, 4h→2190 bars.
+  const warmupBars = interval === '1w' ? 260 : interval === '1d' ? 1200 : 400;
   const barsPerWeek = interval === '4h' ? 42 : interval === '1d' ? 7 : 1;
-  return Math.min(12000, Math.max(120, Math.ceil(lookbackWeeks * barsPerWeek) + warmupBars));
+  return Math.min(12000, Math.max(300, Math.ceil(lookbackWeeks * barsPerWeek) + warmupBars));
 }
 
 function getStockHistoryConfig(interval, lookbackWeeks) {
   if (interval === '1d') {
-    const bars = Math.min(1300, Math.max(120, Math.ceil(lookbackWeeks * 5) + 80));
+    // Use at least 1000 bars so the WT2 extreme-touch history matches the indicator
+    const bars = Math.min(1300, Math.max(1000, Math.ceil(lookbackWeeks * 5) + 200));
     return {
       interval: '1d',
-      range: bars > 252 ? '5y' : '1y',
+      range: '5y',
       bars,
     };
   }
@@ -86,7 +90,7 @@ function getStockHistoryConfig(interval, lookbackWeeks) {
   return {
     interval: '1w',
     range: '5y',
-    bars: Math.min(260, Math.max(120, lookbackWeeks + 40)),
+    bars: Math.min(260, Math.max(200, lookbackWeeks + 120)),
   };
 }
 
