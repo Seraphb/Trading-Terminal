@@ -630,35 +630,22 @@ function detectGoldenCross(klines) {
   return { goldBuys, greenBuys };
 }
 
-// ── Chart Patterns: Double Bottom / Double Top / Breakout-and-Retest ──────
+// ── Chart Patterns: Double Bottom / Double Top / Breakout-Retest / Trendline ──
 //
-// Three individually-toggleable classic price-action patterns.
+// Four individually-toggleable classic price-action patterns.
 //
 //  A. Double Bottom (bullish W)
-//     Two swing lows within 4% of each other → neckline peak between them →
-//     close above neckline.
-//     GREEN = first breakout close above neckline
-//     GOLD  = retest of neckline as support confirmed
+//  B. Double Top    (bearish M)
+//  C. Breakout & Retest  — horizontal S/R zone flip
+//  D. Trendline Breakout — descending swing-high trendline broken by a close above it
 //
-//  B. Double Top (bearish M)
-//     Two swing highs within 4% of each other → neckline trough between them →
-//     close below neckline.
-//     GREEN = first breakdown close below neckline
-//     GOLD  = retest of neckline as resistance confirmed
-//
-//  C. Breakout & Retest (S/R flip)
-//     ≥2 prior swing highs define a resistance → fresh close above it with
-//     volume → pullback that tags the old level and holds.
-//     GREEN = volume-confirmed breakout (≥1.25× avg)
-//     GOLD  = retest confirmed (low in zone, close above)
-//
-// Returns patternMeta (Map<barIndex, geometry>) so the preview chart can
-// draw specific lines and markers for each detected pattern.
+// Returns patternMeta (Map<barIndex, geometry>) for the preview chart overlays.
 function detectChartPatterns(klines, _symbol = '', opts = {}) {
   const {
-    doubleBottom   = true,
-    doubleTop      = true,
-    breakoutRetest = true,
+    doubleBottom      = true,
+    doubleTop         = true,
+    breakoutRetest    = true,
+    trendlineBreakout = true,
   } = opts;
 
   if (klines.length < 50) return { goldBuys: [], greenBuys: [], patternMeta: new Map() };
@@ -812,6 +799,53 @@ function detectChartPatterns(klines, _symbol = '', opts = {}) {
         }
       }
       if (!retested && hasVolSpike) { greenSet.add(i); patternMeta.set(i, base); }
+    }
+  }
+
+  // ── D. Trendline Breakout ────────────────────────────────────────────
+  // Finds pairs of descending swing highs (H2 < H1, H2 more recent),
+  // projects the trendline forward, and detects a close above it.
+  // GREEN = close above projected trendline (fresh break)
+  // GOLD  = price subsequently retests the trendline from above and holds
+  if (trendlineBreakout) {
+    for (let m = 0; m < swingHighs.length - 1; m++) {
+      const idxA = swingHighs[m];       // older, higher high
+      const idxB = swingHighs[m + 1];   // newer, lower high (descending)
+      if (highs[idxB] >= highs[idxA]) continue; // must be descending
+      const gap = idxB - idxA;
+      if (gap < 5 || gap > 80) continue;
+
+      // Trendline: price at any bar k = highs[idxA] + slope*(k - idxA)
+      const slope = (highs[idxB] - highs[idxA]) / gap;
+
+      // Scan for first close above the projected trendline after idxB
+      let brokeOutIdx = -1;
+      for (let j = idxB + 1; j < Math.min(idxB + 40, n); j++) {
+        const projected = highs[idxA] + slope * (j - idxA);
+        // Price should have been below the trendline recently (fresh break)
+        const wasBelow = closes[Math.max(0, j - 3)] < projected * 1.005;
+        if (wasBelow && closes[j] > projected) { brokeOutIdx = j; break; }
+      }
+      if (brokeOutIdx < 0) continue;
+
+      const base = {
+        type: 'trendline_breakout',
+        trendHigh1Time:  klines[idxA]?.time, trendHigh1Price: highs[idxA],
+        trendHigh2Time:  klines[idxB]?.time, trendHigh2Price: highs[idxB],
+        slope, trendStartIdx: idxA,
+        breakoutTime: klines[brokeOutIdx]?.time,
+      };
+
+      // Gold: retest of trendline (price touches projected value from above)
+      let retested = false;
+      for (let j = brokeOutIdx + 1; j < Math.min(brokeOutIdx + 15, n); j++) {
+        const projected = highs[idxA] + slope * (j - idxA);
+        const inZone    = lows[j] <= projected * 1.025 && lows[j] >= projected * 0.97;
+        if (inZone && closes[j] >= projected * 0.99) {
+          goldSet.add(j); patternMeta.set(j, base); retested = true; break;
+        }
+      }
+      if (!retested) { greenSet.add(brokeOutIdx); patternMeta.set(brokeOutIdx, base); }
     }
   }
 
@@ -981,7 +1015,7 @@ function formatDaysAgo(daysAgo) {
 export default function Scanner() {
   const { theme } = useTheme();
   const [selectedStrategy, setSelectedStrategy] = useState('vumanchu_b');
-  const [chartPatternTypes, setChartPatternTypes] = useState(['double_bottom', 'double_top', 'breakout_retest']);
+  const [chartPatternTypes, setChartPatternTypes] = useState(['double_bottom', 'double_top', 'breakout_retest', 'trendline_breakout']);
   const [mode, setMode] = useState(null); // 'stocks', 'crypto', or null
   const [scope, setScope] = useState(null);
   const [scanning, setScanning] = useState(false);
@@ -1097,9 +1131,10 @@ export default function Scanner() {
       if (!klines || klines.length === 0) return null;
       // Pass chart pattern type options so only toggled patterns are run
       const extraOpts = selectedStrategy === 'chart_patterns' ? {
-        doubleBottom:   chartPatternTypes.includes('double_bottom'),
-        doubleTop:      chartPatternTypes.includes('double_top'),
-        breakoutRetest: chartPatternTypes.includes('breakout_retest'),
+        doubleBottom:      chartPatternTypes.includes('double_bottom'),
+        doubleTop:         chartPatternTypes.includes('double_top'),
+        breakoutRetest:    chartPatternTypes.includes('breakout_retest'),
+        trendlineBreakout: chartPatternTypes.includes('trendline_breakout'),
       } : {};
       detectionResult = strategy.detect(klines, symbol, extraOpts);
     }
@@ -1424,9 +1459,10 @@ export default function Scanner() {
             </div>
             <div className="flex flex-col gap-1.5">
               {[
-                { id: 'double_bottom',   label: 'Double Bottom', icon: '↑↑', color: '#22c55e', hint: 'Bullish W — breakout + retest of neckline' },
-                { id: 'double_top',      label: 'Double Top',    icon: '↓↓', color: '#ef4444', hint: 'Bearish M — breakdown + retest of neckline' },
-                { id: 'breakout_retest', label: 'Breakout & Retest', icon: '⟶', color: '#f59e0b', hint: 'Resistance → support flip with volume' },
+                { id: 'double_bottom',      label: 'Double Bottom',      icon: '↑↑', color: '#22c55e', hint: 'Bullish W — breakout + retest of neckline' },
+                { id: 'double_top',         label: 'Double Top',         icon: '↓↓', color: '#ef4444', hint: 'Bearish M — breakdown + retest of neckline' },
+                { id: 'breakout_retest',    label: 'Breakout & Retest',  icon: '⟶',  color: '#f59e0b', hint: 'Horizontal S/R zone flip with volume' },
+                { id: 'trendline_breakout', label: 'Trendline Breakout', icon: '↗',  color: '#60a5fa', hint: 'Descending trendline broken above' },
               ].map(p => {
                 const active = chartPatternTypes.includes(p.id);
                 return (

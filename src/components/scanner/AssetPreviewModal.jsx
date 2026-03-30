@@ -188,123 +188,177 @@ function PreviewCandleChart({ chartData, goldSignalTime, patternOverlays }) {
           const sigIdx  = chartData.findIndex(c => c.time === sigTime);
           if (sigIdx < 0) return null;
 
+          // ── Double Bottom — "W" shape ──────────────────────────────────
           if (pat.type === 'double_bottom') {
-            const i1 = chartData.findIndex(c => c.time === pat.low1Time);
-            const i2 = chartData.findIndex(c => c.time === pat.low2Time);
-            const nkY = toY(pat.neckline);
-            const xStart = i1 >= 0 ? toX(i1) : toX(0);
+            const i1  = chartData.findIndex(c => c.time === pat.low1Time);
+            const i2  = chartData.findIndex(c => c.time === pat.low2Time);
+            if (i1 < 0 || i2 < 0) return null;
+            const nkY  = toY(pat.neckline);
+            const l1y  = toY(chartData[i1].low);
+            const l2y  = toY(chartData[i2].low);
+            const l1x  = toX(i1), l2x = toX(i2);
+            const capW = Math.max(8, candleW * 2.5);
+            // mid-point for the W valley hump (highest close between the two lows)
+            const midIdx = Math.round((i1 + i2) / 2);
+            const midX   = toX(midIdx);
+            const midY   = toY(pat.neckline * 0.92); // approx hump
+            // shaded W zone polygon
+            const zonePts = [
+              `${l1x},${nkY}`,
+              `${l1x},${l1y}`,
+              `${midX},${midY}`,
+              `${l2x},${l2y}`,
+              `${l2x},${nkY}`,
+            ].join(' ');
             return (
               <g key={timeStr}>
-                {/* neckline — solid, vibrant green */}
-                <line x1={xStart} x2={toX(sigIdx)} y1={nkY} y2={nkY}
-                  stroke="#22c55e" strokeWidth="2" opacity="1" />
-                <text x={toX(sigIdx) + 4} y={nkY - 4} fill="#22c55e" fontSize="9" fontFamily="monospace" fontWeight="bold">neck</text>
-                {/* low 1 marker */}
-                {i1 >= 0 && (() => {
-                  const lx = toX(i1), ly = toY(chartData[i1].low);
-                  return (
-                    <g>
-                      <polygon points={`${lx},${ly - 14} ${lx - 6},${ly - 4} ${lx + 6},${ly - 4}`} fill="#22c55e" />
-                      <text x={lx} y={ly - 18} textAnchor="middle" fill="#22c55e" fontSize="9" fontFamily="monospace" fontWeight="bold">L1</text>
-                    </g>
-                  );
-                })()}
-                {/* low 2 marker */}
-                {i2 >= 0 && (() => {
-                  const lx = toX(i2), ly = toY(chartData[i2].low);
-                  return (
-                    <g>
-                      <polygon points={`${lx},${ly - 14} ${lx - 6},${ly - 4} ${lx + 6},${ly - 4}`} fill="#22c55e" />
-                      <text x={lx} y={ly - 18} textAnchor="middle" fill="#22c55e" fontSize="9" fontFamily="monospace" fontWeight="bold">L2</text>
-                    </g>
-                  );
-                })()}
-                {/* solid diagonal connecting the two lows — the "W" base */}
-                {i1 >= 0 && i2 >= 0 && (
-                  <line x1={toX(i1)} y1={toY(chartData[i1].low)} x2={toX(i2)} y2={toY(chartData[i2].low)}
-                    stroke="#22c55e" strokeWidth="2.5" opacity="1" />
-                )}
+                {/* shaded W zone */}
+                <polygon points={zonePts} fill="#22c55e" opacity="0.10" />
+                {/* neckline — solid green */}
+                <line x1={l1x} x2={toX(sigIdx)} y1={nkY} y2={nkY}
+                  stroke="#22c55e" strokeWidth="2" />
+                <text x={toX(sigIdx) + 4} y={nkY - 4} fill="#22c55e" fontSize="9"
+                  fontFamily="monospace" fontWeight="bold">neck</text>
+                {/* L1 horizontal cap bar */}
+                <line x1={l1x - capW} x2={l1x + capW} y1={l1y + 6} y2={l1y + 6}
+                  stroke="#22c55e" strokeWidth="4" strokeLinecap="round" />
+                <text x={l1x} y={l1y + 20} textAnchor="middle" fill="#22c55e"
+                  fontSize="9" fontFamily="monospace" fontWeight="bold">L1</text>
+                {/* L2 horizontal cap bar */}
+                <line x1={l2x - capW} x2={l2x + capW} y1={l2y + 6} y2={l2y + 6}
+                  stroke="#22c55e" strokeWidth="4" strokeLinecap="round" />
+                <text x={l2x} y={l2y + 20} textAnchor="middle" fill="#22c55e"
+                  fontSize="9" fontFamily="monospace" fontWeight="bold">L2</text>
               </g>
             );
           }
 
+          // ── Double Top — "M" shape ──────────────────────────────────
           if (pat.type === 'double_top') {
-            const i1 = chartData.findIndex(c => c.time === pat.high1Time);
-            const i2 = chartData.findIndex(c => c.time === pat.high2Time);
-            const nkY = toY(pat.neckline);
-            const xStart = i1 >= 0 ? toX(i1) : toX(0);
+            const i1  = chartData.findIndex(c => c.time === pat.high1Time);
+            const i2  = chartData.findIndex(c => c.time === pat.high2Time);
+            if (i1 < 0 || i2 < 0) return null;
+            const nkY  = toY(pat.neckline);
+            const h1y  = toY(chartData[i1].high);
+            const h2y  = toY(chartData[i2].high);
+            const h1x  = toX(i1), h2x = toX(i2);
+            const capW = Math.max(8, candleW * 2.5);
+            const midIdx = Math.round((i1 + i2) / 2);
+            const midX   = toX(midIdx);
+            const midY   = toY(pat.neckline * 1.08); // approx M valley
+            const zonePts = [
+              `${h1x},${nkY}`,
+              `${h1x},${h1y}`,
+              `${midX},${midY}`,
+              `${h2x},${h2y}`,
+              `${h2x},${nkY}`,
+            ].join(' ');
             return (
               <g key={timeStr}>
-                {/* neckline — solid, vibrant red */}
-                <line x1={xStart} x2={toX(sigIdx)} y1={nkY} y2={nkY}
-                  stroke="#ef4444" strokeWidth="2" opacity="1" />
-                <text x={toX(sigIdx) + 4} y={nkY - 4} fill="#ef4444" fontSize="9" fontFamily="monospace" fontWeight="bold">neck</text>
-                {/* high 1 marker */}
-                {i1 >= 0 && (() => {
-                  const hx = toX(i1), hy = toY(chartData[i1].high);
-                  return (
-                    <g>
-                      <polygon points={`${hx},${hy + 14} ${hx - 6},${hy + 4} ${hx + 6},${hy + 4}`} fill="#ef4444" />
-                      <text x={hx} y={hy + 26} textAnchor="middle" fill="#ef4444" fontSize="9" fontFamily="monospace" fontWeight="bold">H1</text>
-                    </g>
-                  );
-                })()}
-                {/* high 2 marker */}
-                {i2 >= 0 && (() => {
-                  const hx = toX(i2), hy = toY(chartData[i2].high);
-                  return (
-                    <g>
-                      <polygon points={`${hx},${hy + 14} ${hx - 6},${hy + 4} ${hx + 6},${hy + 4}`} fill="#ef4444" />
-                      <text x={hx} y={hy + 26} textAnchor="middle" fill="#ef4444" fontSize="9" fontFamily="monospace" fontWeight="bold">H2</text>
-                    </g>
-                  );
-                })()}
-                {/* solid diagonal connecting the two highs — the "M" roof */}
-                {i1 >= 0 && i2 >= 0 && (
-                  <line x1={toX(i1)} y1={toY(chartData[i1].high)} x2={toX(i2)} y2={toY(chartData[i2].high)}
-                    stroke="#ef4444" strokeWidth="2.5" opacity="1" />
-                )}
+                {/* shaded M zone */}
+                <polygon points={zonePts} fill="#ef4444" opacity="0.10" />
+                {/* neckline — solid red */}
+                <line x1={h1x} x2={toX(sigIdx)} y1={nkY} y2={nkY}
+                  stroke="#ef4444" strokeWidth="2" />
+                <text x={toX(sigIdx) + 4} y={nkY - 4} fill="#ef4444" fontSize="9"
+                  fontFamily="monospace" fontWeight="bold">neck</text>
+                {/* H1 horizontal cap bar */}
+                <line x1={h1x - capW} x2={h1x + capW} y1={h1y - 6} y2={h1y - 6}
+                  stroke="#ef4444" strokeWidth="4" strokeLinecap="round" />
+                <text x={h1x} y={h1y - 12} textAnchor="middle" fill="#ef4444"
+                  fontSize="9" fontFamily="monospace" fontWeight="bold">H1</text>
+                {/* H2 horizontal cap bar */}
+                <line x1={h2x - capW} x2={h2x + capW} y1={h2y - 6} y2={h2y - 6}
+                  stroke="#ef4444" strokeWidth="4" strokeLinecap="round" />
+                <text x={h2x} y={h2y - 12} textAnchor="middle" fill="#ef4444"
+                  fontSize="9" fontFamily="monospace" fontWeight="bold">H2</text>
               </g>
             );
           }
 
+          // ── Breakout & Retest — horizontal zone + arrows ────────────
           if (pat.type === 'breakout_retest') {
-            const resistY = toY(pat.resistance);
             const brkIdx  = chartData.findIndex(c => c.time === pat.breakoutTime);
             const rh1Idx  = chartData.findIndex(c => c.time === pat.rHigh1Time);
             const rh2Idx  = chartData.findIndex(c => c.time === pat.rHigh2Time);
-            // horizontal R→S line spans from earliest resistance high to signal bar
-            const xLineStart = rh1Idx >= 0 && rh2Idx >= 0
-              ? toX(Math.min(rh1Idx, rh2Idx))
+            const zoneTop  = toY(pat.resistance * 1.008);
+            const zoneBot  = toY(pat.resistance * 0.992);
+            const zoneH    = Math.max(4, zoneBot - zoneTop);
+            const xZoneStart = rh1Idx >= 0 && rh2Idx >= 0
+              ? toX(Math.min(rh1Idx, rh2Idx) - 2)
               : brkIdx >= 0 ? toX(Math.max(0, brkIdx - 10)) : MARGIN.left;
+            const xZoneEnd = toX(sigIdx + 2);
+            const bx = brkIdx >= 0 ? toX(brkIdx) : toX(sigIdx - 5);
+            const rx = toX(sigIdx);
+            // arrow helper: points for up/down arrow polygon centred at (cx, cy)
+            const upArrow   = (cx, cy, s) => `${cx},${cy - s} ${cx - s * 0.6},${cy + s * 0.4} ${cx + s * 0.6},${cy + s * 0.4}`;
+            const downArrow = (cx, cy, s) => `${cx},${cy + s} ${cx - s * 0.6},${cy - s * 0.4} ${cx + s * 0.6},${cy - s * 0.4}`;
+            const resistY = toY(pat.resistance);
             return (
               <g key={timeStr}>
-                {/* diagonal resistance line connecting the two swing highs */}
-                {rh1Idx >= 0 && rh2Idx >= 0 && (() => {
-                  // order by time left→right
-                  const [la, lb] = rh1Idx < rh2Idx ? [rh1Idx, rh2Idx] : [rh2Idx, rh1Idx];
-                  const [pa, pb] = rh1Idx < rh2Idx
-                    ? [pat.rHigh1Price, pat.rHigh2Price]
-                    : [pat.rHigh2Price, pat.rHigh1Price];
-                  return (
-                    <line x1={toX(la)} y1={toY(pa)} x2={toX(lb)} y2={toY(pb)}
-                      stroke="#f59e0b" strokeWidth="2.5" opacity="1" />
-                  );
-                })()}
-                {/* horizontal R→S support level — solid, vibrant amber */}
-                <line x1={xLineStart} x2={toX(sigIdx)} y1={resistY} y2={resistY}
-                  stroke="#f59e0b" strokeWidth="2" opacity="1" />
-                <text x={toX(sigIdx) + 4} y={resistY - 4} fill="#f59e0b" fontSize="9" fontFamily="monospace" fontWeight="bold">R→S</text>
-                {/* breakout bar column */}
+                {/* shaded horizontal zone */}
+                <rect x={xZoneStart} y={zoneTop} width={Math.max(0, xZoneEnd - xZoneStart)} height={zoneH}
+                  fill="#f59e0b" opacity="0.28" />
+                {/* zone border lines */}
+                <line x1={xZoneStart} x2={xZoneEnd} y1={zoneTop} y2={zoneTop}
+                  stroke="#f59e0b" strokeWidth="1.5" />
+                <line x1={xZoneStart} x2={xZoneEnd} y1={zoneBot} y2={zoneBot}
+                  stroke="#f59e0b" strokeWidth="1.5" />
+                <text x={xZoneEnd + 4} y={resistY + 4} fill="#f59e0b" fontSize="9"
+                  fontFamily="monospace" fontWeight="bold">R→S</text>
+                {/* ↑ breakout arrow (green) */}
+                <polygon points={upArrow(bx, resistY - 18, 9)} fill="#22c55e" />
+                <line x1={bx} y1={resistY - 8} x2={bx} y2={zoneTop}
+                  stroke="#22c55e" strokeWidth="1.5" />
+                {/* ↓ retest arrow (amber) */}
+                <polygon points={downArrow(rx, resistY + 18, 9)} fill="#f59e0b" />
+                <line x1={rx} y1={zoneBot} x2={rx} y2={resistY + 8}
+                  stroke="#f59e0b" strokeWidth="1.5" />
+              </g>
+            );
+          }
+
+          // ── Trendline Breakout — descending trendline ───────────────
+          if (pat.type === 'trendline_breakout') {
+            const th1Idx = chartData.findIndex(c => c.time === pat.trendHigh1Time);
+            const th2Idx = chartData.findIndex(c => c.time === pat.trendHigh2Time);
+            const brkIdx = chartData.findIndex(c => c.time === pat.breakoutTime);
+            if (th1Idx < 0 || th2Idx < 0) return null;
+            // Project trendline from th1 all the way to signal bar
+            const slope  = (pat.trendHigh2Price - pat.trendHigh1Price) / (th2Idx - th1Idx);
+            const projAt = (idx) => pat.trendHigh1Price + slope * (idx - th1Idx);
+            const extEnd = sigIdx + 3; // extend a few bars past signal
+            // shaded area under trendline (from th1 to breakout)
+            const shadeEnd = brkIdx >= 0 ? brkIdx : sigIdx;
+            const shadePts = [
+              `${toX(th1Idx)},${toY(projAt(th1Idx))}`,
+              `${toX(shadeEnd)},${toY(projAt(shadeEnd))}`,
+              `${toX(shadeEnd)},${MARGIN.top + plotH}`,
+              `${toX(th1Idx)},${MARGIN.top + plotH}`,
+            ].join(' ');
+            return (
+              <g key={timeStr}>
+                {/* shaded zone under trendline */}
+                <polygon points={shadePts} fill="#60a5fa" opacity="0.08" />
+                {/* descending trendline — solid blue, extended to signal */}
+                <line
+                  x1={toX(th1Idx)} y1={toY(projAt(th1Idx))}
+                  x2={toX(Math.min(extEnd, chartData.length - 1))} y2={toY(projAt(Math.min(extEnd, chartData.length - 1)))}
+                  stroke="#60a5fa" strokeWidth="2.5" />
+                {/* H1 dot on trendline */}
+                <circle cx={toX(th1Idx)} cy={toY(pat.trendHigh1Price)} r="4"
+                  fill="#60a5fa" />
+                {/* H2 dot on trendline */}
+                <circle cx={toX(th2Idx)} cy={toY(pat.trendHigh2Price)} r="4"
+                  fill="#60a5fa" />
+                {/* breakout candle highlight */}
                 {brkIdx >= 0 && (
-                  <rect x={toX(brkIdx) - candleW * 0.8} y={MARGIN.top}
-                    width={candleW * 1.6} height={plotH}
-                    fill="#f59e0b" opacity="0.14" />
+                  <rect x={toX(brkIdx) - candleW} y={MARGIN.top}
+                    width={candleW * 2} height={plotH}
+                    fill="#60a5fa" opacity="0.12" />
                 )}
-                {/* retest bar column */}
-                <rect x={toX(sigIdx) - candleW * 0.8} y={MARGIN.top}
-                  width={candleW * 1.6} height={plotH}
-                  fill="#f59e0b" opacity="0.18" />
+                <text x={toX(sigIdx) + 4} y={toY(projAt(sigIdx)) - 6}
+                  fill="#60a5fa" fontSize="9" fontFamily="monospace" fontWeight="bold">BRK</text>
               </g>
             );
           }
