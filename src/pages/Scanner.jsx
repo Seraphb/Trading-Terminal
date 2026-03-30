@@ -792,7 +792,16 @@ function detectChartPatterns(klines, _symbol = '', opts = {}) {
 
       const hasVolSpike = vols[i] > volAvg[i] * 1.25;
 
-      const base = { type: 'breakout_retest', resistance, breakoutTime: klines[i]?.time };
+      // Store the two highest swing highs so the preview can draw the diagonal resistance line
+      const sortedPH = [...priorHighs].sort((a, b) => highs[b] - highs[a]);
+      const rh1 = sortedPH[0], rh2 = sortedPH[1];
+      const base = {
+        type: 'breakout_retest',
+        resistance,
+        breakoutTime: klines[i]?.time,
+        rHigh1Time: klines[rh1]?.time, rHigh1Price: highs[rh1],
+        rHigh2Time: klines[rh2]?.time, rHigh2Price: highs[rh2],
+      };
 
       let retested = false;
       for (let j = i + 1; j < Math.min(i + 12, n); j++) {

@@ -192,21 +192,20 @@ function PreviewCandleChart({ chartData, goldSignalTime, patternOverlays }) {
             const i1 = chartData.findIndex(c => c.time === pat.low1Time);
             const i2 = chartData.findIndex(c => c.time === pat.low2Time);
             const nkY = toY(pat.neckline);
-            // extent lines — from first low to signal bar
             const xStart = i1 >= 0 ? toX(i1) : toX(0);
             return (
               <g key={timeStr}>
-                {/* neckline */}
+                {/* neckline — solid, vibrant green */}
                 <line x1={xStart} x2={toX(sigIdx)} y1={nkY} y2={nkY}
-                  stroke="#22c55e" strokeWidth="1.2" strokeDasharray="5,3" opacity="0.85" />
-                <text x={toX(sigIdx) + 4} y={nkY - 4} fill="#22c55e" fontSize="9" fontFamily="monospace">neck</text>
+                  stroke="#22c55e" strokeWidth="2" opacity="1" />
+                <text x={toX(sigIdx) + 4} y={nkY - 4} fill="#22c55e" fontSize="9" fontFamily="monospace" fontWeight="bold">neck</text>
                 {/* low 1 marker */}
                 {i1 >= 0 && (() => {
                   const lx = toX(i1), ly = toY(chartData[i1].low);
                   return (
                     <g>
-                      <polygon points={`${lx},${ly - 14} ${lx - 5},${ly - 6} ${lx + 5},${ly - 6}`} fill="#22c55e" opacity="0.9" />
-                      <text x={lx} y={ly - 17} textAnchor="middle" fill="#22c55e" fontSize="8" fontFamily="monospace">L1</text>
+                      <polygon points={`${lx},${ly - 14} ${lx - 6},${ly - 4} ${lx + 6},${ly - 4}`} fill="#22c55e" />
+                      <text x={lx} y={ly - 18} textAnchor="middle" fill="#22c55e" fontSize="9" fontFamily="monospace" fontWeight="bold">L1</text>
                     </g>
                   );
                 })()}
@@ -215,15 +214,15 @@ function PreviewCandleChart({ chartData, goldSignalTime, patternOverlays }) {
                   const lx = toX(i2), ly = toY(chartData[i2].low);
                   return (
                     <g>
-                      <polygon points={`${lx},${ly - 14} ${lx - 5},${ly - 6} ${lx + 5},${ly - 6}`} fill="#22c55e" opacity="0.9" />
-                      <text x={lx} y={ly - 17} textAnchor="middle" fill="#22c55e" fontSize="8" fontFamily="monospace">L2</text>
+                      <polygon points={`${lx},${ly - 14} ${lx - 6},${ly - 4} ${lx + 6},${ly - 4}`} fill="#22c55e" />
+                      <text x={lx} y={ly - 18} textAnchor="middle" fill="#22c55e" fontSize="9" fontFamily="monospace" fontWeight="bold">L2</text>
                     </g>
                   );
                 })()}
-                {/* connecting line between the two lows */}
+                {/* solid diagonal connecting the two lows — the "W" base */}
                 {i1 >= 0 && i2 >= 0 && (
                   <line x1={toX(i1)} y1={toY(chartData[i1].low)} x2={toX(i2)} y2={toY(chartData[i2].low)}
-                    stroke="#22c55e" strokeWidth="1" strokeDasharray="3,3" opacity="0.45" />
+                    stroke="#22c55e" strokeWidth="2.5" opacity="1" />
                 )}
               </g>
             );
@@ -236,17 +235,17 @@ function PreviewCandleChart({ chartData, goldSignalTime, patternOverlays }) {
             const xStart = i1 >= 0 ? toX(i1) : toX(0);
             return (
               <g key={timeStr}>
-                {/* neckline */}
+                {/* neckline — solid, vibrant red */}
                 <line x1={xStart} x2={toX(sigIdx)} y1={nkY} y2={nkY}
-                  stroke="#ef4444" strokeWidth="1.2" strokeDasharray="5,3" opacity="0.85" />
-                <text x={toX(sigIdx) + 4} y={nkY - 4} fill="#ef4444" fontSize="9" fontFamily="monospace">neck</text>
+                  stroke="#ef4444" strokeWidth="2" opacity="1" />
+                <text x={toX(sigIdx) + 4} y={nkY - 4} fill="#ef4444" fontSize="9" fontFamily="monospace" fontWeight="bold">neck</text>
                 {/* high 1 marker */}
                 {i1 >= 0 && (() => {
                   const hx = toX(i1), hy = toY(chartData[i1].high);
                   return (
                     <g>
-                      <polygon points={`${hx},${hy + 14} ${hx - 5},${hy + 6} ${hx + 5},${hy + 6}`} fill="#ef4444" opacity="0.9" />
-                      <text x={hx} y={hy + 24} textAnchor="middle" fill="#ef4444" fontSize="8" fontFamily="monospace">H1</text>
+                      <polygon points={`${hx},${hy + 14} ${hx - 6},${hy + 4} ${hx + 6},${hy + 4}`} fill="#ef4444" />
+                      <text x={hx} y={hy + 26} textAnchor="middle" fill="#ef4444" fontSize="9" fontFamily="monospace" fontWeight="bold">H1</text>
                     </g>
                   );
                 })()}
@@ -255,40 +254,57 @@ function PreviewCandleChart({ chartData, goldSignalTime, patternOverlays }) {
                   const hx = toX(i2), hy = toY(chartData[i2].high);
                   return (
                     <g>
-                      <polygon points={`${hx},${hy + 14} ${hx - 5},${hy + 6} ${hx + 5},${hy + 6}`} fill="#ef4444" opacity="0.9" />
-                      <text x={hx} y={hy + 24} textAnchor="middle" fill="#ef4444" fontSize="8" fontFamily="monospace">H2</text>
+                      <polygon points={`${hx},${hy + 14} ${hx - 6},${hy + 4} ${hx + 6},${hy + 4}`} fill="#ef4444" />
+                      <text x={hx} y={hy + 26} textAnchor="middle" fill="#ef4444" fontSize="9" fontFamily="monospace" fontWeight="bold">H2</text>
                     </g>
                   );
                 })()}
-                {/* connecting line between the two highs */}
+                {/* solid diagonal connecting the two highs — the "M" roof */}
                 {i1 >= 0 && i2 >= 0 && (
                   <line x1={toX(i1)} y1={toY(chartData[i1].high)} x2={toX(i2)} y2={toY(chartData[i2].high)}
-                    stroke="#ef4444" strokeWidth="1" strokeDasharray="3,3" opacity="0.45" />
+                    stroke="#ef4444" strokeWidth="2.5" opacity="1" />
                 )}
               </g>
             );
           }
 
           if (pat.type === 'breakout_retest') {
-            const resistY  = toY(pat.resistance);
-            const brkIdx   = chartData.findIndex(c => c.time === pat.breakoutTime);
-            const xStart   = brkIdx >= 0 ? toX(Math.max(0, brkIdx - 8)) : MARGIN.left;
+            const resistY = toY(pat.resistance);
+            const brkIdx  = chartData.findIndex(c => c.time === pat.breakoutTime);
+            const rh1Idx  = chartData.findIndex(c => c.time === pat.rHigh1Time);
+            const rh2Idx  = chartData.findIndex(c => c.time === pat.rHigh2Time);
+            // horizontal R→S line spans from earliest resistance high to signal bar
+            const xLineStart = rh1Idx >= 0 && rh2Idx >= 0
+              ? toX(Math.min(rh1Idx, rh2Idx))
+              : brkIdx >= 0 ? toX(Math.max(0, brkIdx - 10)) : MARGIN.left;
             return (
               <g key={timeStr}>
-                {/* resistance → support dashed line */}
-                <line x1={xStart} x2={toX(sigIdx)} y1={resistY} y2={resistY}
-                  stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="6,3" opacity="0.9" />
-                <text x={toX(sigIdx) + 4} y={resistY - 4} fill="#f59e0b" fontSize="9" fontFamily="monospace">R→S</text>
-                {/* breakout bar highlight */}
+                {/* diagonal resistance line connecting the two swing highs */}
+                {rh1Idx >= 0 && rh2Idx >= 0 && (() => {
+                  // order by time left→right
+                  const [la, lb] = rh1Idx < rh2Idx ? [rh1Idx, rh2Idx] : [rh2Idx, rh1Idx];
+                  const [pa, pb] = rh1Idx < rh2Idx
+                    ? [pat.rHigh1Price, pat.rHigh2Price]
+                    : [pat.rHigh2Price, pat.rHigh1Price];
+                  return (
+                    <line x1={toX(la)} y1={toY(pa)} x2={toX(lb)} y2={toY(pb)}
+                      stroke="#f59e0b" strokeWidth="2.5" opacity="1" />
+                  );
+                })()}
+                {/* horizontal R→S support level — solid, vibrant amber */}
+                <line x1={xLineStart} x2={toX(sigIdx)} y1={resistY} y2={resistY}
+                  stroke="#f59e0b" strokeWidth="2" opacity="1" />
+                <text x={toX(sigIdx) + 4} y={resistY - 4} fill="#f59e0b" fontSize="9" fontFamily="monospace" fontWeight="bold">R→S</text>
+                {/* breakout bar column */}
                 {brkIdx >= 0 && (
                   <rect x={toX(brkIdx) - candleW * 0.8} y={MARGIN.top}
                     width={candleW * 1.6} height={plotH}
-                    fill="#f59e0b" opacity="0.07" />
+                    fill="#f59e0b" opacity="0.14" />
                 )}
-                {/* retest bar highlight */}
+                {/* retest bar column */}
                 <rect x={toX(sigIdx) - candleW * 0.8} y={MARGIN.top}
                   width={candleW * 1.6} height={plotH}
-                  fill="#f59e0b" opacity="0.1" />
+                  fill="#f59e0b" opacity="0.18" />
               </g>
             );
           }
