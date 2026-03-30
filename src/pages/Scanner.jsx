@@ -630,6 +630,149 @@ function detectGoldenCross(klines) {
   return { goldBuys, greenBuys };
 }
 
+// ── Chart Patterns: Double Bottom / Double Top / Breakout-and-Retest ──────
+//
+// Detects three classic price-action patterns:
+//
+//  A. Double Bottom
+//     Two swing lows at ≈ the same price (within 4%), a neckline peak between
+//     them, then price breaks above the neckline.
+//     GREEN = breakout candle closes above neckline
+//     GOLD  = price subsequently retests the neckline as support and holds
+//
+//  B. Breakout & Retest (resistance → support flip)
+//     A meaningful resistance level (2+ prior swing highs) is broken with a
+//     closing price above it.  Price then pulls back and holds the old
+//     resistance as new support.
+//     GREEN = breakout bar with volume spike (≥ 1.25× avg)
+//     GOLD  = retest bar confirmed (low tags the old resistance, close above)
+//
+//  Double Top (bearish inverse of A) is detected internally and excluded
+//  from goldBuys/greenBuys (which are bullish-only).  Use the terminal
+//  chart to visually inspect bearish setups.
+function detectChartPatterns(klines) {
+  if (klines.length < 50) return { goldBuys: [], greenBuys: [] };
+
+  const closes = klines.map(k => k.close);
+  const highs  = klines.map(k => k.high);
+  const lows   = klines.map(k => k.low);
+  const vols   = klines.map(k => k.volume);
+  const n      = klines.length;
+
+  // ── swing-point helpers (strict: ALL neighbours must be higher/lower) ──
+  function isSwingLow(i, w = 5) {
+    if (i < w || i >= n - w) return false;
+    for (let j = i - w; j <= i + w; j++) {
+      if (j !== i && lows[j] < lows[i]) return false;
+    }
+    return true;
+  }
+  function isSwingHigh(i, w = 5) {
+    if (i < w || i >= n - w) return false;
+    for (let j = i - w; j <= i + w; j++) {
+      if (j !== i && highs[j] > highs[i]) return false;
+    }
+    return true;
+  }
+
+  const swingLows  = [];
+  const swingHighs = [];
+  for (let i = 5; i < n - 5; i++) {
+    if (isSwingLow(i))  swingLows.push(i);
+    if (isSwingHigh(i)) swingHighs.push(i);
+  }
+
+  const goldSet  = new Set();
+  const greenSet = new Set();
+
+  // ── A. Double Bottom ─────────────────────────────────────────────────
+  for (let m = 0; m < swingLows.length - 1; m++) {
+    const a = swingLows[m];      // first bottom index
+    const b = swingLows[m + 1];  // second bottom index
+    const gap = b - a;
+    if (gap < 8 || gap > 60) continue;  // too tight or too spread out
+
+    // Both lows must be within 4% of each other
+    const pctDiff = Math.abs(lows[a] - lows[b]) / Math.min(lows[a], lows[b]);
+    if (pctDiff > 0.04) continue;
+
+    // Neckline = highest close between the two lows
+    let neckline = 0;
+    for (let j = a; j <= b; j++) if (closes[j] > neckline) neckline = closes[j];
+    if (!neckline) continue;
+
+    // Both lows must sit meaningfully below the neckline (real W shape)
+    if (lows[a] >= neckline * 0.97 || lows[b] >= neckline * 0.97) continue;
+
+    // Scan for a breakout close above the neckline after the 2nd bottom
+    let brokeOutIdx = -1;
+    for (let j = b + 1; j < Math.min(b + 30, n); j++) {
+      if (closes[j] > neckline) { brokeOutIdx = j; break; }
+    }
+    if (brokeOutIdx < 0) continue;
+
+    // Gold: price retests the neckline as support (within 15 bars) and holds
+    let retested = false;
+    for (let j = brokeOutIdx + 1; j < Math.min(brokeOutIdx + 15, n); j++) {
+      const touchedNeck = lows[j] <= neckline * 1.025 && lows[j] >= neckline * 0.975;
+      if (touchedNeck && closes[j] >= neckline * 0.99) {
+        goldSet.add(j);
+        retested = true;
+        break;
+      }
+    }
+    // Green: breakout confirmed but no retest yet
+    if (!retested) greenSet.add(brokeOutIdx);
+  }
+
+  // ── B. Breakout & Retest (resistance → support flip) ─────────────────
+  // Rolling 20-bar average volume
+  const volAvg = vols.map((_, i) => {
+    const slice = vols.slice(Math.max(0, i - 20), i);
+    return slice.length ? slice.reduce((s, v) => s + v, 0) / slice.length : vols[i];
+  });
+
+  for (let i = 25; i < n - 1; i++) {
+    // Need ≥ 2 prior swing highs in the last 40 bars to define a resistance level
+    const priorHighs = swingHighs.filter(sh => sh >= i - 40 && sh < i - 3);
+    if (priorHighs.length < 2) continue;
+
+    const resistance = Math.max(...priorHighs.map(sh => highs[sh]));
+
+    // Bar i must be the first closing break above resistance
+    if (closes[i] <= resistance) continue;
+    if (closes[i - 1] > resistance * 1.005) continue;  // already above — stale
+
+    // Confirm price was below resistance for the 5 bars leading up to the break
+    const freshBreak = closes.slice(Math.max(0, i - 5), i).every(c => c < resistance * 1.01);
+    if (!freshBreak) continue;
+
+    const hasVolSpike = vols[i] > volAvg[i] * 1.25;
+
+    // Gold: retest — low touches old resistance zone, close holds above it
+    let retested = false;
+    for (let j = i + 1; j < Math.min(i + 12, n); j++) {
+      const inZone   = lows[j] <= resistance * 1.03 && lows[j] >= resistance * 0.97;
+      const heldAbove = closes[j] >= resistance * 0.99;
+      if (inZone && heldAbove) {
+        goldSet.add(j);
+        retested = true;
+        break;
+      }
+    }
+    // Green: volume-confirmed breakout awaiting retest
+    if (!retested && hasVolSpike) greenSet.add(i);
+  }
+
+  // A bar can't be both green and gold — gold takes priority
+  for (const g of goldSet) greenSet.delete(g);
+
+  return {
+    goldBuys:  [...goldSet].sort((a, b) => a - b),
+    greenBuys: [...greenSet].sort((a, b) => a - b),
+  };
+}
+
 // ── Sniper Signals detect wrapper ─────────────────────────────────────────
 // Maps buildSignalData output → { goldBuys, greenBuys } index arrays.
 // goldBuys = ELITE tier (score ≥ 78), greenBuys = STRONG/SIGNAL tier (≥ 48).
@@ -702,6 +845,14 @@ const SCAN_STRATEGIES = {
     description: 'WaveTrend × RSI Bounce hybrid — 8-condition confluence scoring. Gold ≥ 5 votes, Green ≥ 3.',
     color: '#eab308',
     detect: detectGoldenCross,
+  },
+  chart_patterns: {
+    id: 'chart_patterns',
+    name: 'Chart Patterns',
+    shortName: 'Patterns',
+    description: 'Double Bottom & Breakout-Retest. Green = breakout above neckline / resistance. Gold = confirmed retest of that level as new support.',
+    color: '#ec4899',
+    detect: detectChartPatterns,
   },
   sniper_signals: {
     id: 'sniper_signals',
