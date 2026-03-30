@@ -632,26 +632,36 @@ function detectGoldenCross(klines) {
 
 // ── Chart Patterns: Double Bottom / Double Top / Breakout-and-Retest ──────
 //
-// Detects three classic price-action patterns:
+// Three individually-toggleable classic price-action patterns.
 //
-//  A. Double Bottom
-//     Two swing lows at ≈ the same price (within 4%), a neckline peak between
-//     them, then price breaks above the neckline.
-//     GREEN = breakout candle closes above neckline
-//     GOLD  = price subsequently retests the neckline as support and holds
+//  A. Double Bottom (bullish W)
+//     Two swing lows within 4% of each other → neckline peak between them →
+//     close above neckline.
+//     GREEN = first breakout close above neckline
+//     GOLD  = retest of neckline as support confirmed
 //
-//  B. Breakout & Retest (resistance → support flip)
-//     A meaningful resistance level (2+ prior swing highs) is broken with a
-//     closing price above it.  Price then pulls back and holds the old
-//     resistance as new support.
-//     GREEN = breakout bar with volume spike (≥ 1.25× avg)
-//     GOLD  = retest bar confirmed (low tags the old resistance, close above)
+//  B. Double Top (bearish M)
+//     Two swing highs within 4% of each other → neckline trough between them →
+//     close below neckline.
+//     GREEN = first breakdown close below neckline
+//     GOLD  = retest of neckline as resistance confirmed
 //
-//  Double Top (bearish inverse of A) is detected internally and excluded
-//  from goldBuys/greenBuys (which are bullish-only).  Use the terminal
-//  chart to visually inspect bearish setups.
-function detectChartPatterns(klines) {
-  if (klines.length < 50) return { goldBuys: [], greenBuys: [] };
+//  C. Breakout & Retest (S/R flip)
+//     ≥2 prior swing highs define a resistance → fresh close above it with
+//     volume → pullback that tags the old level and holds.
+//     GREEN = volume-confirmed breakout (≥1.25× avg)
+//     GOLD  = retest confirmed (low in zone, close above)
+//
+// Returns patternMeta (Map<barIndex, geometry>) so the preview chart can
+// draw specific lines and markers for each detected pattern.
+function detectChartPatterns(klines, _symbol = '', opts = {}) {
+  const {
+    doubleBottom   = true,
+    doubleTop      = true,
+    breakoutRetest = true,
+  } = opts;
+
+  if (klines.length < 50) return { goldBuys: [], greenBuys: [], patternMeta: new Map() };
 
   const closes = klines.map(k => k.close);
   const highs  = klines.map(k => k.high);
@@ -659,19 +669,15 @@ function detectChartPatterns(klines) {
   const vols   = klines.map(k => k.volume);
   const n      = klines.length;
 
-  // ── swing-point helpers (strict: ALL neighbours must be higher/lower) ──
+  // strict swing-point helpers
   function isSwingLow(i, w = 5) {
     if (i < w || i >= n - w) return false;
-    for (let j = i - w; j <= i + w; j++) {
-      if (j !== i && lows[j] < lows[i]) return false;
-    }
+    for (let j = i - w; j <= i + w; j++) if (j !== i && lows[j] < lows[i]) return false;
     return true;
   }
   function isSwingHigh(i, w = 5) {
     if (i < w || i >= n - w) return false;
-    for (let j = i - w; j <= i + w; j++) {
-      if (j !== i && highs[j] > highs[i]) return false;
-    }
+    for (let j = i - w; j <= i + w; j++) if (j !== i && highs[j] > highs[i]) return false;
     return true;
   }
 
@@ -682,94 +688,131 @@ function detectChartPatterns(klines) {
     if (isSwingHigh(i)) swingHighs.push(i);
   }
 
-  const goldSet  = new Set();
-  const greenSet = new Set();
+  const goldSet     = new Set();
+  const greenSet    = new Set();
+  const patternMeta = new Map(); // barIndex → { type, key price levels, key timestamps }
 
   // ── A. Double Bottom ─────────────────────────────────────────────────
-  for (let m = 0; m < swingLows.length - 1; m++) {
-    const a = swingLows[m];      // first bottom index
-    const b = swingLows[m + 1];  // second bottom index
-    const gap = b - a;
-    if (gap < 8 || gap > 60) continue;  // too tight or too spread out
+  if (doubleBottom) {
+    for (let m = 0; m < swingLows.length - 1; m++) {
+      const a = swingLows[m], b = swingLows[m + 1];
+      const gap = b - a;
+      if (gap < 8 || gap > 60) continue;
 
-    // Both lows must be within 4% of each other
-    const pctDiff = Math.abs(lows[a] - lows[b]) / Math.min(lows[a], lows[b]);
-    if (pctDiff > 0.04) continue;
+      const pctDiff = Math.abs(lows[a] - lows[b]) / Math.min(lows[a], lows[b]);
+      if (pctDiff > 0.04) continue;
 
-    // Neckline = highest close between the two lows
-    let neckline = 0;
-    for (let j = a; j <= b; j++) if (closes[j] > neckline) neckline = closes[j];
-    if (!neckline) continue;
+      let neckline = 0;
+      for (let j = a; j <= b; j++) if (closes[j] > neckline) neckline = closes[j];
+      if (!neckline) continue;
+      if (lows[a] >= neckline * 0.97 || lows[b] >= neckline * 0.97) continue;
 
-    // Both lows must sit meaningfully below the neckline (real W shape)
-    if (lows[a] >= neckline * 0.97 || lows[b] >= neckline * 0.97) continue;
-
-    // Scan for a breakout close above the neckline after the 2nd bottom
-    let brokeOutIdx = -1;
-    for (let j = b + 1; j < Math.min(b + 30, n); j++) {
-      if (closes[j] > neckline) { brokeOutIdx = j; break; }
-    }
-    if (brokeOutIdx < 0) continue;
-
-    // Gold: price retests the neckline as support (within 15 bars) and holds
-    let retested = false;
-    for (let j = brokeOutIdx + 1; j < Math.min(brokeOutIdx + 15, n); j++) {
-      const touchedNeck = lows[j] <= neckline * 1.025 && lows[j] >= neckline * 0.975;
-      if (touchedNeck && closes[j] >= neckline * 0.99) {
-        goldSet.add(j);
-        retested = true;
-        break;
+      let brokeOutIdx = -1;
+      for (let j = b + 1; j < Math.min(b + 30, n); j++) {
+        if (closes[j] > neckline) { brokeOutIdx = j; break; }
       }
+      if (brokeOutIdx < 0) continue;
+
+      const base = {
+        type: 'double_bottom',
+        low1Time: klines[a]?.time, low1Price: lows[a],
+        low2Time: klines[b]?.time, low2Price: lows[b],
+        neckline,
+        breakoutTime: klines[brokeOutIdx]?.time,
+      };
+
+      let retested = false;
+      for (let j = brokeOutIdx + 1; j < Math.min(brokeOutIdx + 15, n); j++) {
+        const touched = lows[j] <= neckline * 1.025 && lows[j] >= neckline * 0.975;
+        if (touched && closes[j] >= neckline * 0.99) {
+          goldSet.add(j); patternMeta.set(j, base); retested = true; break;
+        }
+      }
+      if (!retested) { greenSet.add(brokeOutIdx); patternMeta.set(brokeOutIdx, base); }
     }
-    // Green: breakout confirmed but no retest yet
-    if (!retested) greenSet.add(brokeOutIdx);
   }
 
-  // ── B. Breakout & Retest (resistance → support flip) ─────────────────
-  // Rolling 20-bar average volume
-  const volAvg = vols.map((_, i) => {
-    const slice = vols.slice(Math.max(0, i - 20), i);
-    return slice.length ? slice.reduce((s, v) => s + v, 0) / slice.length : vols[i];
-  });
+  // ── B. Double Top ────────────────────────────────────────────────────
+  if (doubleTop) {
+    for (let m = 0; m < swingHighs.length - 1; m++) {
+      const a = swingHighs[m], b = swingHighs[m + 1];
+      const gap = b - a;
+      if (gap < 8 || gap > 60) continue;
 
-  for (let i = 25; i < n - 1; i++) {
-    // Need ≥ 2 prior swing highs in the last 40 bars to define a resistance level
-    const priorHighs = swingHighs.filter(sh => sh >= i - 40 && sh < i - 3);
-    if (priorHighs.length < 2) continue;
+      const pctDiff = Math.abs(highs[a] - highs[b]) / Math.max(highs[a], highs[b]);
+      if (pctDiff > 0.04) continue;
 
-    const resistance = Math.max(...priorHighs.map(sh => highs[sh]));
+      let neckline = Infinity;
+      for (let j = a; j <= b; j++) if (closes[j] < neckline) neckline = closes[j];
+      if (!isFinite(neckline)) continue;
+      if (highs[a] <= neckline * 1.03 || highs[b] <= neckline * 1.03) continue;
 
-    // Bar i must be the first closing break above resistance
-    if (closes[i] <= resistance) continue;
-    if (closes[i - 1] > resistance * 1.005) continue;  // already above — stale
-
-    // Confirm price was below resistance for the 5 bars leading up to the break
-    const freshBreak = closes.slice(Math.max(0, i - 5), i).every(c => c < resistance * 1.01);
-    if (!freshBreak) continue;
-
-    const hasVolSpike = vols[i] > volAvg[i] * 1.25;
-
-    // Gold: retest — low touches old resistance zone, close holds above it
-    let retested = false;
-    for (let j = i + 1; j < Math.min(i + 12, n); j++) {
-      const inZone   = lows[j] <= resistance * 1.03 && lows[j] >= resistance * 0.97;
-      const heldAbove = closes[j] >= resistance * 0.99;
-      if (inZone && heldAbove) {
-        goldSet.add(j);
-        retested = true;
-        break;
+      let brokenDownIdx = -1;
+      for (let j = b + 1; j < Math.min(b + 30, n); j++) {
+        if (closes[j] < neckline) { brokenDownIdx = j; break; }
       }
+      if (brokenDownIdx < 0) continue;
+
+      const base = {
+        type: 'double_top',
+        high1Time: klines[a]?.time, high1Price: highs[a],
+        high2Time: klines[b]?.time, high2Price: highs[b],
+        neckline,
+        breakdownTime: klines[brokenDownIdx]?.time,
+      };
+
+      let retested = false;
+      for (let j = brokenDownIdx + 1; j < Math.min(brokenDownIdx + 15, n); j++) {
+        const touched = highs[j] >= neckline * 0.975 && highs[j] <= neckline * 1.025;
+        if (touched && closes[j] <= neckline * 1.01) {
+          goldSet.add(j); patternMeta.set(j, base); retested = true; break;
+        }
+      }
+      if (!retested) { greenSet.add(brokenDownIdx); patternMeta.set(brokenDownIdx, base); }
     }
-    // Green: volume-confirmed breakout awaiting retest
-    if (!retested && hasVolSpike) greenSet.add(i);
   }
 
-  // A bar can't be both green and gold — gold takes priority
+  // ── C. Breakout & Retest (resistance → support flip) ─────────────────
+  if (breakoutRetest) {
+    const volAvg = vols.map((_, i) => {
+      const sl = vols.slice(Math.max(0, i - 20), i);
+      return sl.length ? sl.reduce((s, v) => s + v, 0) / sl.length : vols[i];
+    });
+
+    for (let i = 25; i < n - 1; i++) {
+      const priorHighs = swingHighs.filter(sh => sh >= i - 40 && sh < i - 3);
+      if (priorHighs.length < 2) continue;
+
+      const resistance = Math.max(...priorHighs.map(sh => highs[sh]));
+      if (closes[i] <= resistance) continue;
+      if (closes[i - 1] > resistance * 1.005) continue;
+
+      const freshBreak = closes.slice(Math.max(0, i - 5), i).every(c => c < resistance * 1.01);
+      if (!freshBreak) continue;
+
+      const hasVolSpike = vols[i] > volAvg[i] * 1.25;
+
+      const base = { type: 'breakout_retest', resistance, breakoutTime: klines[i]?.time };
+
+      let retested = false;
+      for (let j = i + 1; j < Math.min(i + 12, n); j++) {
+        const inZone    = lows[j] <= resistance * 1.03 && lows[j] >= resistance * 0.97;
+        const heldAbove = closes[j] >= resistance * 0.99;
+        if (inZone && heldAbove) {
+          goldSet.add(j); patternMeta.set(j, base); retested = true; break;
+        }
+      }
+      if (!retested && hasVolSpike) { greenSet.add(i); patternMeta.set(i, base); }
+    }
+  }
+
+  // gold takes priority
   for (const g of goldSet) greenSet.delete(g);
 
   return {
     goldBuys:  [...goldSet].sort((a, b) => a - b),
     greenBuys: [...greenSet].sort((a, b) => a - b),
+    patternMeta,
   };
 }
 
@@ -850,7 +893,7 @@ const SCAN_STRATEGIES = {
     id: 'chart_patterns',
     name: 'Chart Patterns',
     shortName: 'Patterns',
-    description: 'Double Bottom & Breakout-Retest. Green = breakout above neckline / resistance. Gold = confirmed retest of that level as new support.',
+    description: 'Double Bottom (W), Double Top (M) & Breakout-Retest. Green = pattern breakout. Gold = confirmed retest of the neckline / S-R level.',
     color: '#ec4899',
     detect: detectChartPatterns,
   },
@@ -929,6 +972,7 @@ function formatDaysAgo(daysAgo) {
 export default function Scanner() {
   const { theme } = useTheme();
   const [selectedStrategy, setSelectedStrategy] = useState('vumanchu_b');
+  const [chartPatternTypes, setChartPatternTypes] = useState(['double_bottom', 'double_top', 'breakout_retest']);
   const [mode, setMode] = useState(null); // 'stocks', 'crypto', or null
   const [scope, setScope] = useState(null);
   const [scanning, setScanning] = useState(false);
@@ -1042,7 +1086,13 @@ export default function Scanner() {
       // ── Single timeframe ──
       klines = await fetchRealData(symbol, isCrypto);
       if (!klines || klines.length === 0) return null;
-      detectionResult = strategy.detect(klines, symbol);
+      // Pass chart pattern type options so only toggled patterns are run
+      const extraOpts = selectedStrategy === 'chart_patterns' ? {
+        doubleBottom:   chartPatternTypes.includes('double_bottom'),
+        doubleTop:      chartPatternTypes.includes('double_top'),
+        breakoutRetest: chartPatternTypes.includes('breakout_retest'),
+      } : {};
+      detectionResult = strategy.detect(klines, symbol, extraOpts);
     }
 
     const { greenBuys, goldBuys } = detectionResult;
@@ -1062,6 +1112,17 @@ export default function Scanner() {
       ...greenBuys.map((idx) => ({ time: klines[idx]?.time, price: klines[idx]?.close, type: 'green' })),
     ].filter((s) => s.time != null && s.price != null);
 
+    // For chart_patterns strategy: convert patternMeta (Map<idx, info>) to a
+    // timestamp-keyed object so the preview modal can look up patterns by candle time.
+    let patternData = null;
+    if (detectionResult.patternMeta?.size > 0) {
+      patternData = {};
+      for (const [idx, info] of detectionResult.patternMeta) {
+        const t = klines[idx]?.time;
+        if (t != null) patternData[t] = info;
+      }
+    }
+
     return {
       symbol: isCrypto ? symbol : normalizeStockSymbol(symbol),
       isCrypto,
@@ -1079,6 +1140,7 @@ export default function Scanner() {
       scanTimeframe: strategy.multiTimeframe ? '1W+1D+4H' : scanTimeframe,
       strategyId: selectedStrategy,
       signals: allSignals,
+      patternData,   // { [timestampMs]: patternInfo } — only set for chart_patterns
     };
   };
 
@@ -1291,6 +1353,8 @@ export default function Scanner() {
     rsi_oversold:    'RSI < 25 bounce + divergence',
     macd_cross:      'MACD cross in negative territory',
     golden_cross:    'WT cross + RSI bounce + MFI + vol',
+    chart_patterns:  'Double Bottom / Top + Breakout-Retest',
+    sniper_signals:  'SMC: BOS/ChoCH + FVG + OB + WT',
   };
 
   return (
@@ -1342,6 +1406,46 @@ export default function Scanner() {
             );
           })}
         </div>
+
+        {/* Chart pattern type selector — visible only when Patterns strategy is active */}
+        {selectedStrategy === 'chart_patterns' && (
+          <div className="rounded-lg border p-2.5" style={{ borderColor }}>
+            <div className="text-[10px] uppercase tracking-wider font-medium mb-2" style={{ color: mutedColor }}>
+              Patterns to search
+            </div>
+            <div className="flex flex-col gap-1.5">
+              {[
+                { id: 'double_bottom',   label: 'Double Bottom', icon: '↑↑', color: '#22c55e', hint: 'Bullish W — breakout + retest of neckline' },
+                { id: 'double_top',      label: 'Double Top',    icon: '↓↓', color: '#ef4444', hint: 'Bearish M — breakdown + retest of neckline' },
+                { id: 'breakout_retest', label: 'Breakout & Retest', icon: '⟶', color: '#f59e0b', hint: 'Resistance → support flip with volume' },
+              ].map(p => {
+                const active = chartPatternTypes.includes(p.id);
+                return (
+                  <button key={p.id} type="button" disabled={scanning}
+                    onClick={() => setChartPatternTypes(prev =>
+                      prev.includes(p.id) ? prev.filter(x => x !== p.id) : [...prev, p.id]
+                    )}
+                    className="flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left transition-all"
+                    style={{
+                      background: active ? `${p.color}18` : 'transparent',
+                      borderColor: active ? p.color : borderColor,
+                      opacity: scanning ? 0.6 : 1,
+                    }}>
+                    <span className="text-[11px] font-bold w-5 text-center flex-shrink-0" style={{ color: active ? p.color : mutedColor }}>{p.icon}</span>
+                    <div className="min-w-0">
+                      <div className="text-[10px] font-semibold leading-tight" style={{ color: active ? p.color : textColor }}>{p.label}</div>
+                      <div className="text-[9px] leading-tight mt-0.5" style={{ color: mutedColor }}>{p.hint}</div>
+                    </div>
+                    <div className="ml-auto w-3.5 h-3.5 rounded-sm border flex-shrink-0 flex items-center justify-center"
+                      style={{ borderColor: active ? p.color : borderColor, background: active ? p.color : 'transparent' }}>
+                      {active && <span className="text-[8px] font-bold text-white leading-none">✓</span>}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Backtest runner */}
         <button
