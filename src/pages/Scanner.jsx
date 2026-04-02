@@ -859,6 +859,236 @@ function detectChartPatterns(klines, _symbol = '', opts = {}) {
   };
 }
 
+// ── Patterns Pro — detect FORMING patterns (not yet completed) ────────────
+// Finds assets where price is *approaching* a key pattern level right now.
+// GOLD = price within `pct` of trigger (imminent breakout/breakdown)
+// GREEN = price within `pct * 2` of trigger (forming, approaching)
+// The user-controlled `pct` (proximity %) sets how close "about to" means.
+function detectPatternsPro(klines, _symbol = '', opts = {}) {
+  const {
+    doubleBottom      = true,
+    doubleTop         = true,
+    breakoutRetest    = true,
+    trendlineBreakout = true,
+    proximityPct      = 3,     // user-controlled: % distance to trigger
+  } = opts;
+
+  if (klines.length < 50) return { goldBuys: [], greenBuys: [], patternMeta: new Map() };
+
+  const closes = klines.map(k => k.close);
+  const highs  = klines.map(k => k.high);
+  const lows   = klines.map(k => k.low);
+  const vols   = klines.map(k => k.volume);
+  const n      = klines.length;
+
+  const pctNear = proximityPct / 100;       // e.g. 0.03 for 3%
+  const pctFar  = (proximityPct * 2) / 100; // e.g. 0.06 for 6%
+
+  // Swing-point helpers (same as chart_patterns)
+  function isSwingLow(i, w = 5) {
+    if (i < w || i >= n - w) return false;
+    for (let j = i - w; j <= i + w; j++) if (j !== i && lows[j] < lows[i]) return false;
+    return true;
+  }
+  function isSwingHigh(i, w = 5) {
+    if (i < w || i >= n - w) return false;
+    for (let j = i - w; j <= i + w; j++) if (j !== i && highs[j] > highs[i]) return false;
+    return true;
+  }
+
+  const swingLows  = [];
+  const swingHighs = [];
+  for (let i = 5; i < n - 5; i++) {
+    if (isSwingLow(i))  swingLows.push(i);
+    if (isSwingHigh(i)) swingHighs.push(i);
+  }
+
+  const goldSet     = new Set();
+  const greenSet    = new Set();
+  const patternMeta = new Map();
+
+  const lastIdx   = n - 1;
+  const lastClose = closes[lastIdx];
+
+  // Helper: only keep the most recent (highest index) signal per pattern type
+  // to avoid cluttering with old "forming" patterns — we care about NOW.
+  const bestByType = {};
+  function registerSignal(idx, info, distPct) {
+    const key = info.type;
+    const isGold = distPct <= pctNear;
+    if (!bestByType[key] || idx > bestByType[key].idx) {
+      // Remove previous entry for this type
+      if (bestByType[key]) {
+        goldSet.delete(bestByType[key].idx);
+        greenSet.delete(bestByType[key].idx);
+        patternMeta.delete(bestByType[key].idx);
+      }
+      bestByType[key] = { idx, isGold };
+      if (isGold) { goldSet.add(idx); } else { greenSet.add(idx); }
+      patternMeta.set(idx, { ...info, distancePct: +(distPct * 100).toFixed(2), proximity: isGold ? 'imminent' : 'approaching' });
+    }
+  }
+
+  // ── A. Forming Double Bottom — two lows, price approaching neckline ────
+  if (doubleBottom) {
+    for (let m = 0; m < swingLows.length - 1; m++) {
+      const a = swingLows[m], b = swingLows[m + 1];
+      const gap = b - a;
+      if (gap < 6 || gap > 80) continue;
+
+      const pctDiff = Math.abs(lows[a] - lows[b]) / Math.min(lows[a], lows[b]);
+      if (pctDiff > 0.06) continue; // slightly more lenient for forming
+
+      // Neckline = highest close between the two lows
+      let neckline = 0;
+      for (let j = a; j <= b; j++) if (closes[j] > neckline) neckline = closes[j];
+      if (!neckline || lows[a] >= neckline * 0.97) continue;
+
+      // Has NOT broken out yet (that's the "forming" part)
+      const alreadyBrokenOut = closes.slice(b + 1).some(c => c > neckline * 1.005);
+      if (alreadyBrokenOut) continue;
+
+      // Check if current price is approaching neckline from below
+      const distToNeck = (neckline - lastClose) / neckline;
+      if (distToNeck > 0 && distToNeck <= pctFar) {
+        registerSignal(lastIdx, {
+          type: 'forming_double_bottom',
+          low1Time: klines[a]?.time, low1Price: lows[a],
+          low2Time: klines[b]?.time, low2Price: lows[b],
+          neckline,
+          triggerPrice: neckline,
+          currentDist: distToNeck,
+        }, distToNeck);
+      }
+    }
+  }
+
+  // ── B. Forming Double Top — two highs, price approaching neckline ──────
+  if (doubleTop) {
+    for (let m = 0; m < swingHighs.length - 1; m++) {
+      const a = swingHighs[m], b = swingHighs[m + 1];
+      const gap = b - a;
+      if (gap < 6 || gap > 80) continue;
+
+      const pctDiff = Math.abs(highs[a] - highs[b]) / Math.max(highs[a], highs[b]);
+      if (pctDiff > 0.06) continue;
+
+      let neckline = Infinity;
+      for (let j = a; j <= b; j++) if (closes[j] < neckline) neckline = closes[j];
+      if (!isFinite(neckline) || highs[a] <= neckline * 1.03) continue;
+
+      // Has NOT broken down yet
+      const alreadyBrokenDown = closes.slice(b + 1).some(c => c < neckline * 0.995);
+      if (alreadyBrokenDown) continue;
+
+      // Check if current price is approaching neckline from above
+      const distToNeck = (lastClose - neckline) / neckline;
+      if (distToNeck > 0 && distToNeck <= pctFar) {
+        registerSignal(lastIdx, {
+          type: 'forming_double_top',
+          high1Time: klines[a]?.time, high1Price: highs[a],
+          high2Time: klines[b]?.time, high2Price: highs[b],
+          neckline,
+          triggerPrice: neckline,
+          currentDist: distToNeck,
+        }, distToNeck);
+      }
+    }
+  }
+
+  // ── C. Approaching Resistance Breakout — price near resistance zone ────
+  if (breakoutRetest) {
+    // Build a volume average
+    const volAvg = vols.map((_, i) => {
+      const sl = vols.slice(Math.max(0, i - 20), i);
+      return sl.length ? sl.reduce((s, v) => s + v, 0) / sl.length : vols[i];
+    });
+
+    // Find strong resistance zones (multiple swing highs at similar price)
+    const recentHighs = swingHighs.filter(sh => sh >= n - 120);
+    if (recentHighs.length >= 2) {
+      // Cluster swing highs into resistance levels
+      const sorted = [...recentHighs].sort((a, b) => highs[b] - highs[a]);
+      const resistance = highs[sorted[0]];
+
+      // Count touches near this resistance (within 1.5%)
+      const touches = recentHighs.filter(sh => Math.abs(highs[sh] - resistance) / resistance < 0.015);
+
+      if (touches.length >= 2) {
+        // Has NOT broken above yet
+        const maxCloseAfter = Math.max(...closes.slice(Math.max(...touches)));
+        if (maxCloseAfter < resistance * 1.005) {
+          const distToResist = (resistance - lastClose) / resistance;
+          if (distToResist > 0 && distToResist <= pctFar) {
+            // Check for volume building up (rising volume = pressure)
+            const recentVol = vols.slice(-5).reduce((s, v) => s + v, 0) / 5;
+            const hasVolBuildup = recentVol > volAvg[lastIdx] * 1.1;
+
+            const rh1 = touches[0], rh2 = touches[touches.length - 1];
+            registerSignal(lastIdx, {
+              type: 'forming_breakout',
+              resistance,
+              triggerPrice: resistance,
+              currentDist: distToResist,
+              rHigh1Time: klines[rh1]?.time, rHigh1Price: highs[rh1],
+              rHigh2Time: klines[rh2]?.time, rHigh2Price: highs[rh2],
+              touchCount: touches.length,
+              volumeBuildup: hasVolBuildup,
+            }, distToResist);
+          }
+        }
+      }
+    }
+  }
+
+  // ── D. Approaching Trendline Breakout — price nearing descending TL ────
+  if (trendlineBreakout) {
+    for (let m = 0; m < swingHighs.length - 1; m++) {
+      const idxA = swingHighs[m];
+      const idxB = swingHighs[m + 1];
+      if (highs[idxB] >= highs[idxA]) continue; // must be descending
+      const gap = idxB - idxA;
+      if (gap < 5 || gap > 80) continue;
+
+      const slope = (highs[idxB] - highs[idxA]) / gap;
+
+      // Project trendline to current bar
+      const projectedNow = highs[idxA] + slope * (lastIdx - idxA);
+      if (projectedNow <= 0) continue; // trendline went negative, skip
+
+      // Has NOT broken above yet
+      const alreadyBroken = closes.slice(idxB + 1).some((c, j) => {
+        const proj = highs[idxA] + slope * (idxB + 1 + j - idxA);
+        return c > proj * 1.005;
+      });
+      if (alreadyBroken) continue;
+
+      // Check distance from current price to projected trendline
+      const distToTL = (projectedNow - lastClose) / projectedNow;
+      if (distToTL > 0 && distToTL <= pctFar) {
+        registerSignal(lastIdx, {
+          type: 'forming_trendline',
+          trendHigh1Time: klines[idxA]?.time, trendHigh1Price: highs[idxA],
+          trendHigh2Time: klines[idxB]?.time, trendHigh2Price: highs[idxB],
+          slope,
+          trendStartIdx: idxA,
+          triggerPrice: projectedNow,
+          currentDist: distToTL,
+        }, distToTL);
+      }
+    }
+  }
+
+  // Gold takes priority
+  for (const g of goldSet) greenSet.delete(g);
+
+  return {
+    goldBuys:  [...goldSet].sort((a, b) => a - b),
+    greenBuys: [...greenSet].sort((a, b) => a - b),
+    patternMeta,
+  };
+}
+
 // ── Sniper Signals detect wrapper ─────────────────────────────────────────
 // Maps buildSignalData output → { goldBuys, greenBuys } index arrays.
 // goldBuys = ELITE tier (score ≥ 78), greenBuys = STRONG/SIGNAL tier (≥ 48).
@@ -940,6 +1170,14 @@ const SCAN_STRATEGIES = {
     color: '#ec4899',
     detect: detectChartPatterns,
   },
+  patterns_pro: {
+    id: 'patterns_pro',
+    name: 'Patterns Pro',
+    shortName: 'Pat Pro',
+    description: 'Detects FORMING patterns — about to break out or break down. Gold = imminent (within X%). Green = approaching (within 2×X%).',
+    color: '#a78bfa',
+    detect: detectPatternsPro,
+  },
   sniper_signals: {
     id: 'sniper_signals',
     name: '⚡ Sniper Signals',
@@ -1016,6 +1254,8 @@ export default function Scanner() {
   const { theme } = useTheme();
   const [selectedStrategy, setSelectedStrategy] = useState('vumanchu_b');
   const [chartPatternTypes, setChartPatternTypes] = useState(['double_bottom', 'double_top', 'breakout_retest', 'trendline_breakout']);
+  const [patProProximity, setPatProProximity] = useState(3); // Patterns Pro: % distance threshold
+  const [patProTypes, setPatProTypes] = useState(['double_bottom', 'double_top', 'breakout_retest', 'trendline_breakout']);
   const [mode, setMode] = useState(null); // 'stocks', 'crypto', or null
   const [scope, setScope] = useState(null);
   const [scanning, setScanning] = useState(false);
@@ -1135,6 +1375,12 @@ export default function Scanner() {
         doubleTop:         chartPatternTypes.includes('double_top'),
         breakoutRetest:    chartPatternTypes.includes('breakout_retest'),
         trendlineBreakout: chartPatternTypes.includes('trendline_breakout'),
+      } : selectedStrategy === 'patterns_pro' ? {
+        doubleBottom:      patProTypes.includes('double_bottom'),
+        doubleTop:         patProTypes.includes('double_top'),
+        breakoutRetest:    patProTypes.includes('breakout_retest'),
+        trendlineBreakout: patProTypes.includes('trendline_breakout'),
+        proximityPct:      patProProximity,
       } : {};
       detectionResult = strategy.detect(klines, symbol, extraOpts);
     }
@@ -1143,11 +1389,15 @@ export default function Scanner() {
     const lastCandle = klines[klines.length - 1];
     const minGoldTime = (lastCandle?.time ?? Date.now()) - signalLookbackWeeks * MS_PER_WEEK;
     const recentGoldBuys = goldBuys.filter((index) => (klines[index]?.time ?? 0) >= minGoldTime);
+    const recentGreenBuys = greenBuys.filter((index) => (klines[index]?.time ?? 0) >= minGoldTime);
     const lastGoldIndex = recentGoldBuys[recentGoldBuys.length - 1];
 
-    if (recentGoldBuys.length === 0) return null;
+    // Patterns Pro: allow green-only results (approaching patterns)
+    const isPatPro = selectedStrategy === 'patterns_pro';
+    if (recentGoldBuys.length === 0 && (!isPatPro || recentGreenBuys.length === 0)) return null;
 
-    const goldSignalPrice = klines[lastGoldIndex]?.close ?? lastCandle.close;
+    const signalIdx = lastGoldIndex ?? recentGreenBuys[recentGreenBuys.length - 1];
+    const goldSignalPrice = klines[signalIdx]?.close ?? lastCandle.close;
     const changeSinceSignal = ((lastCandle.close - goldSignalPrice) / goldSignalPrice * 100);
 
     // Build all signal markers for the chart overlay
@@ -1175,11 +1425,11 @@ export default function Scanner() {
       goldBuyCount: recentGoldBuys.length,
       hasGreenBuy: greenBuys.length > 0,
       hasGoldBuy: recentGoldBuys.length > 0,
-      signalType: 'gold',
+      signalType: recentGoldBuys.length > 0 ? 'gold' : 'green',
       changeSinceSignal,
       goldSignalPrice,
-      goldSignalTime: klines[lastGoldIndex]?.time ?? lastCandle.time,
-      goldSignalDaysAgo: getDaysAgo(klines[lastGoldIndex]?.time ?? lastCandle.time),
+      goldSignalTime: klines[signalIdx]?.time ?? lastCandle.time,
+      goldSignalDaysAgo: getDaysAgo(klines[signalIdx]?.time ?? lastCandle.time),
       signalLookbackWeeks,
       scanTimeframe: strategy.multiTimeframe ? '1W+1D+4H' : scanTimeframe,
       strategyId: selectedStrategy,
@@ -1398,6 +1648,7 @@ export default function Scanner() {
     macd_cross:      'MACD cross in negative territory',
     golden_cross:    'WT cross + RSI bounce + MFI + vol',
     chart_patterns:  'Double Bottom / Top + Breakout-Retest',
+    patterns_pro:    'Forming patterns — about to break',
     sniper_signals:  'SMC: BOS/ChoCH + FVG + OB + WT',
   };
 
@@ -1477,6 +1728,74 @@ export default function Scanner() {
                       opacity: scanning ? 0.6 : 1,
                     }}>
                     <span className="text-[11px] font-bold w-5 text-center flex-shrink-0" style={{ color: active ? p.color : mutedColor }}>{p.icon}</span>
+                    <div className="min-w-0">
+                      <div className="text-[10px] font-semibold leading-tight" style={{ color: active ? p.color : textColor }}>{p.label}</div>
+                      <div className="text-[9px] leading-tight mt-0.5" style={{ color: mutedColor }}>{p.hint}</div>
+                    </div>
+                    <div className="ml-auto w-3.5 h-3.5 rounded-sm border flex-shrink-0 flex items-center justify-center"
+                      style={{ borderColor: active ? p.color : borderColor, background: active ? p.color : 'transparent' }}>
+                      {active && <span className="text-[8px] font-bold text-white leading-none">✓</span>}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Patterns Pro controls — visible only when patterns_pro is active */}
+        {selectedStrategy === 'patterns_pro' && (
+          <div className="rounded-lg border p-2.5" style={{ borderColor }}>
+            <div className="text-[10px] uppercase tracking-wider font-medium mb-2" style={{ color: mutedColor }}>
+              Forming Patterns
+            </div>
+
+            {/* Proximity % slider */}
+            <div className="rounded-lg border px-2.5 py-2 mb-2" style={{ borderColor, background: 'rgba(167,139,250,0.06)' }}>
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[9px] font-semibold" style={{ color: '#a78bfa' }}>Proximity Threshold</span>
+                <span className="text-[12px] font-bold font-mono" style={{ color: '#a78bfa' }}>{patProProximity}%</span>
+              </div>
+              <div className="text-[8px] mb-2 leading-relaxed" style={{ color: mutedColor }}>
+                Gold = within <span style={{ color: '#eab308', fontWeight: 700 }}>{patProProximity}%</span> of trigger (imminent)
+                {' · '}
+                Green = within <span style={{ color: '#22c55e', fontWeight: 700 }}>{patProProximity * 2}%</span> (approaching)
+              </div>
+              <input type="range" min={1} max={10} step={0.5} value={patProProximity}
+                onChange={e => setPatProProximity(Number(e.target.value))}
+                disabled={scanning}
+                className="w-full h-1 rounded-full appearance-none cursor-pointer"
+                style={{
+                  background: `linear-gradient(to right, #a78bfa ${((patProProximity - 1) / 9) * 100}%, ${sliderTrack} ${((patProProximity - 1) / 9) * 100}%)`,
+                }}
+              />
+              <div className="flex justify-between text-[7px] mt-0.5" style={{ color: mutedColor }}>
+                <span>1% tight</span>
+                <span>10% wide</span>
+              </div>
+            </div>
+
+            {/* Pattern type toggles */}
+            <div className="flex flex-col gap-1.5">
+              {[
+                { id: 'double_bottom',      label: 'Double Bottom',      icon: '⏳↑', color: '#22c55e', hint: 'W forming — price approaching neckline' },
+                { id: 'double_top',         label: 'Double Top',         icon: '⏳↓', color: '#ef4444', hint: 'M forming — price approaching neckline' },
+                { id: 'breakout_retest',    label: 'Resistance Break',   icon: '⏳→', color: '#f59e0b', hint: 'Price pushing toward resistance zone' },
+                { id: 'trendline_breakout', label: 'Trendline Break',    icon: '⏳↗', color: '#60a5fa', hint: 'Price approaching descending trendline' },
+              ].map(p => {
+                const active = patProTypes.includes(p.id);
+                return (
+                  <button key={p.id} type="button" disabled={scanning}
+                    onClick={() => setPatProTypes(prev =>
+                      prev.includes(p.id) ? prev.filter(x => x !== p.id) : [...prev, p.id]
+                    )}
+                    className="flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left transition-all"
+                    style={{
+                      background: active ? `${p.color}18` : 'transparent',
+                      borderColor: active ? p.color : borderColor,
+                      opacity: scanning ? 0.6 : 1,
+                    }}>
+                    <span className="text-[10px] font-bold w-6 text-center flex-shrink-0" style={{ color: active ? p.color : mutedColor }}>{p.icon}</span>
                     <div className="min-w-0">
                       <div className="text-[10px] font-semibold leading-tight" style={{ color: active ? p.color : textColor }}>{p.label}</div>
                       <div className="text-[9px] leading-tight mt-0.5" style={{ color: mutedColor }}>{p.hint}</div>

@@ -535,6 +535,242 @@ function PreviewCandleChart({ chartData, goldSignalTime, patternOverlays }) {
             );
           }
 
+          // ── FORMING patterns (Patterns Pro) ─────────────────────
+
+          // ── Forming Double Bottom — W forming, approaching neckline ─
+          if (pat.type === 'forming_double_bottom') {
+            const i1 = chartData.findIndex(c => c.time === pat.low1Time);
+            const i2 = chartData.findIndex(c => c.time === pat.low2Time);
+            if (i1 < 0 || i2 < 0) return null;
+
+            const nkY = toY(pat.neckline);
+            const l1y = toY(chartData[i1].low), l2y = toY(chartData[i2].low);
+            const l1x = toX(i1), l2x = toX(i2);
+            const lastX = toX(chartData.length - 1);
+            const lastY = toY(chartData[chartData.length - 1].close);
+            const isGold = pat.proximity === 'imminent';
+            const accent = isGold ? '#eab308' : '#22c55e';
+
+            return (
+              <g key={timeStr}>
+                {/* Neckline — trigger level, extended to current */}
+                <line x1={l1x - 6} x2={lastX + 12} y1={nkY} y2={nkY}
+                  stroke={accent} strokeWidth="1.5" strokeDasharray="8,4" opacity="0.7" />
+
+                {/* Shaded zone between lows and neckline */}
+                <rect x={l1x} y={nkY} width={l2x - l1x} height={Math.max(2, l1y - nkY)}
+                  fill={accent} opacity="0.06" rx="2" />
+
+                {/* L1 / L2 markers */}
+                <circle cx={l1x} cy={l1y} r="3.5" fill={accent} stroke="#fff" strokeWidth="0.8" />
+                <circle cx={l2x} cy={l2y} r="3.5" fill={accent} stroke="#fff" strokeWidth="0.8" />
+                <text x={l1x} y={l1y + 14} textAnchor="middle" fill={accent}
+                  fontSize="7" fontFamily="Inter, system-ui, sans-serif" fontWeight="700">L1</text>
+                <text x={l2x} y={l2y + 14} textAnchor="middle" fill={accent}
+                  fontSize="7" fontFamily="Inter, system-ui, sans-serif" fontWeight="700">L2</text>
+
+                {/* Distance arrow — current price to neckline */}
+                <line x1={lastX} y1={lastY} x2={lastX} y2={nkY}
+                  stroke={accent} strokeWidth="1.5" strokeDasharray="3,2" opacity="0.6" />
+                <polygon points={`${lastX},${nkY + 4} ${lastX - 4},${nkY + 11} ${lastX + 4},${nkY + 11}`}
+                  fill={accent} opacity="0.7" transform="rotate(180)" style={{ transformOrigin: `${lastX}px ${nkY + 7.5}px` }} />
+
+                {/* Distance badge */}
+                <rect x={lastX + 6} y={(lastY + nkY) / 2 - 8} rx="4" ry="4" width="44" height="16"
+                  fill={accent} opacity="0.18" />
+                <text x={lastX + 28} y={(lastY + nkY) / 2 + 2} textAnchor="middle"
+                  fill={accent} fontSize="8" fontFamily="Inter, system-ui, sans-serif" fontWeight="800">
+                  {pat.distancePct?.toFixed(1)}%↑
+                </text>
+
+                {/* Status badge */}
+                <rect x={l1x} y={nkY - 22} rx="6" ry="6" width="80" height="16"
+                  fill={accent} opacity="0.15" />
+                <text x={l1x + 40} y={nkY - 11} textAnchor="middle"
+                  fill={accent} fontSize="7.5" fontFamily="Inter, system-ui, sans-serif" fontWeight="700"
+                  letterSpacing="0.5">{isGold ? '⚡ IMMINENT' : 'FORMING'} W</text>
+              </g>
+            );
+          }
+
+          // ── Forming Double Top — M forming, approaching neckline ────
+          if (pat.type === 'forming_double_top') {
+            const i1 = chartData.findIndex(c => c.time === pat.high1Time);
+            const i2 = chartData.findIndex(c => c.time === pat.high2Time);
+            if (i1 < 0 || i2 < 0) return null;
+
+            const nkY = toY(pat.neckline);
+            const h1y = toY(chartData[i1].high), h2y = toY(chartData[i2].high);
+            const h1x = toX(i1), h2x = toX(i2);
+            const lastX = toX(chartData.length - 1);
+            const lastY = toY(chartData[chartData.length - 1].close);
+            const isGold = pat.proximity === 'imminent';
+            const accent = isGold ? '#eab308' : '#ef4444';
+
+            return (
+              <g key={timeStr}>
+                {/* Neckline — trigger level */}
+                <line x1={h1x - 6} x2={lastX + 12} y1={nkY} y2={nkY}
+                  stroke={accent} strokeWidth="1.5" strokeDasharray="8,4" opacity="0.7" />
+
+                {/* Shaded M zone */}
+                <rect x={h1x} y={h1y} width={h2x - h1x} height={Math.max(2, nkY - h1y)}
+                  fill={accent} opacity="0.06" rx="2" />
+
+                {/* H1 / H2 markers */}
+                <circle cx={h1x} cy={h1y} r="3.5" fill={accent} stroke="#fff" strokeWidth="0.8" />
+                <circle cx={h2x} cy={h2y} r="3.5" fill={accent} stroke="#fff" strokeWidth="0.8" />
+                <text x={h1x} y={h1y - 8} textAnchor="middle" fill={accent}
+                  fontSize="7" fontFamily="Inter, system-ui, sans-serif" fontWeight="700">H1</text>
+                <text x={h2x} y={h2y - 8} textAnchor="middle" fill={accent}
+                  fontSize="7" fontFamily="Inter, system-ui, sans-serif" fontWeight="700">H2</text>
+
+                {/* Distance arrow — current price to neckline */}
+                <line x1={lastX} y1={lastY} x2={lastX} y2={nkY}
+                  stroke={accent} strokeWidth="1.5" strokeDasharray="3,2" opacity="0.6" />
+
+                {/* Distance badge */}
+                <rect x={lastX + 6} y={(lastY + nkY) / 2 - 8} rx="4" ry="4" width="44" height="16"
+                  fill={accent} opacity="0.18" />
+                <text x={lastX + 28} y={(lastY + nkY) / 2 + 2} textAnchor="middle"
+                  fill={accent} fontSize="8" fontFamily="Inter, system-ui, sans-serif" fontWeight="800">
+                  {pat.distancePct?.toFixed(1)}%↓
+                </text>
+
+                {/* Status badge */}
+                <rect x={h1x} y={h1y - 8} rx="6" ry="6" width="80" height="16"
+                  fill={accent} opacity="0.15" />
+                <text x={h1x + 40} y={h1y + 3} textAnchor="middle"
+                  fill={accent} fontSize="7.5" fontFamily="Inter, system-ui, sans-serif" fontWeight="700"
+                  letterSpacing="0.5">{isGold ? '⚡ IMMINENT' : 'FORMING'} M</text>
+              </g>
+            );
+          }
+
+          // ── Forming Resistance Breakout — price pushing toward zone ─
+          if (pat.type === 'forming_breakout') {
+            const rh1Idx = chartData.findIndex(c => c.time === pat.rHigh1Time);
+            const rh2Idx = chartData.findIndex(c => c.time === pat.rHigh2Time);
+            const resistY = toY(pat.resistance);
+            const zoneTop = toY(pat.resistance * 1.01);
+            const zoneBot = toY(pat.resistance * 0.99);
+            const zoneH = Math.max(6, zoneBot - zoneTop);
+
+            const xStart = rh1Idx >= 0 ? toX(rh1Idx - 1) : MARGIN.left;
+            const lastX = toX(chartData.length - 1);
+            const lastY = toY(chartData[chartData.length - 1].close);
+            const xEnd = lastX + 20;
+            const isGold = pat.proximity === 'imminent';
+            const accent = isGold ? '#eab308' : '#f59e0b';
+
+            return (
+              <g key={timeStr}>
+                {/* Resistance zone */}
+                <rect x={xStart} y={zoneTop} width={Math.max(0, xEnd - xStart)} height={zoneH}
+                  fill={accent} opacity="0.18" rx="2" />
+                <line x1={xStart} x2={xEnd} y1={zoneTop} y2={zoneTop}
+                  stroke={accent} strokeWidth="1" opacity="0.6" />
+                <line x1={xStart} x2={xEnd} y1={zoneBot} y2={zoneBot}
+                  stroke={accent} strokeWidth="1" opacity="0.6" />
+                <line x1={xStart} x2={xEnd} y1={resistY} y2={resistY}
+                  stroke={accent} strokeWidth="1.5" strokeDasharray="6,3" opacity="0.5" />
+
+                {/* Touch-point dots */}
+                {rh1Idx >= 0 && <circle cx={toX(rh1Idx)} cy={toY(pat.rHigh1Price)} r="3" fill={accent} opacity="0.7" />}
+                {rh2Idx >= 0 && <circle cx={toX(rh2Idx)} cy={toY(pat.rHigh2Price)} r="3" fill={accent} opacity="0.7" />}
+
+                {/* Price approaching arrow */}
+                <line x1={lastX} y1={lastY} x2={lastX} y2={zoneBot + 2}
+                  stroke={accent} strokeWidth="2" strokeLinecap="round" opacity="0.7" />
+                <polygon points={`${lastX},${zoneBot - 2} ${lastX - 5},${zoneBot + 7} ${lastX + 5},${zoneBot + 7}`}
+                  fill={accent} filter="url(#glow-amber)" />
+
+                {/* Distance badge */}
+                <rect x={lastX + 8} y={(lastY + resistY) / 2 - 8} rx="4" ry="4" width="44" height="16"
+                  fill={accent} opacity="0.18" />
+                <text x={lastX + 30} y={(lastY + resistY) / 2 + 2} textAnchor="middle"
+                  fill={accent} fontSize="8" fontFamily="Inter, system-ui, sans-serif" fontWeight="800">
+                  {pat.distancePct?.toFixed(1)}%↑
+                </text>
+
+                {/* Status + touches badge */}
+                <rect x={xEnd + 4} y={resistY - 20} rx="5" ry="5" width="68" height="28"
+                  fill={accent} opacity="0.12" />
+                <text x={xEnd + 38} y={resistY - 8} textAnchor="middle"
+                  fill={accent} fontSize="7" fontFamily="Inter, system-ui, sans-serif" fontWeight="700"
+                  letterSpacing="0.4">{isGold ? '⚡ IMMINENT' : 'FORMING'}</text>
+                <text x={xEnd + 38} y={resistY + 3} textAnchor="middle"
+                  fill={accent} fontSize="7" fontFamily="Inter, system-ui, sans-serif" fontWeight="600">
+                  {pat.touchCount}× tested</text>
+              </g>
+            );
+          }
+
+          // ── Forming Trendline Breakout — price approaching TL ──────
+          if (pat.type === 'forming_trendline') {
+            const th1Idx = chartData.findIndex(c => c.time === pat.trendHigh1Time);
+            const th2Idx = chartData.findIndex(c => c.time === pat.trendHigh2Time);
+            if (th1Idx < 0 || th2Idx < 0) return null;
+
+            const slope = (pat.trendHigh2Price - pat.trendHigh1Price) / (th2Idx - th1Idx);
+            const projAt = (idx) => pat.trendHigh1Price + slope * (idx - th1Idx);
+            const lastX = toX(chartData.length - 1);
+            const lastY = toY(chartData[chartData.length - 1].close);
+            const extEnd = Math.min(chartData.length - 1 + 3, chartData.length - 1);
+            const projLastY = toY(projAt(chartData.length - 1));
+            const isGold = pat.proximity === 'imminent';
+            const accent = isGold ? '#eab308' : '#60a5fa';
+
+            return (
+              <g key={timeStr}>
+                {/* Descending trendline */}
+                <line
+                  x1={toX(th1Idx)} y1={toY(projAt(th1Idx))}
+                  x2={toX(extEnd)} y2={toY(projAt(extEnd))}
+                  stroke={accent} strokeWidth="2.5" opacity="0.75" strokeLinecap="round" />
+
+                {/* Pressure zone under trendline (last portion) */}
+                {(() => {
+                  const zStart = Math.max(th2Idx, chartData.length - 20);
+                  const pts = [
+                    `${toX(zStart)},${toY(projAt(zStart))}`,
+                    `${toX(extEnd)},${toY(projAt(extEnd))}`,
+                    `${toX(extEnd)},${toY(projAt(extEnd)) + 30}`,
+                    `${toX(zStart)},${toY(projAt(zStart)) + 30}`,
+                  ].join(' ');
+                  return <polygon points={pts} fill={accent} opacity="0.08" />;
+                })()}
+
+                {/* H1, H2 anchors */}
+                <circle cx={toX(th1Idx)} cy={toY(pat.trendHigh1Price)} r="3.5"
+                  fill={accent} stroke="#fff" strokeWidth="0.8" />
+                <circle cx={toX(th2Idx)} cy={toY(pat.trendHigh2Price)} r="3.5"
+                  fill={accent} stroke="#fff" strokeWidth="0.8" />
+
+                {/* Distance line — current price to trendline projection */}
+                <line x1={lastX} y1={lastY} x2={lastX} y2={projLastY}
+                  stroke={accent} strokeWidth="1.5" strokeDasharray="3,2" opacity="0.6" />
+                <polygon points={`${lastX},${projLastY + 4} ${lastX - 4},${projLastY + 11} ${lastX + 4},${projLastY + 11}`}
+                  fill={accent} opacity="0.7" transform="rotate(180)" style={{ transformOrigin: `${lastX}px ${projLastY + 7.5}px` }} />
+
+                {/* Distance badge */}
+                <rect x={lastX + 6} y={(lastY + projLastY) / 2 - 8} rx="4" ry="4" width="44" height="16"
+                  fill={accent} opacity="0.18" />
+                <text x={lastX + 28} y={(lastY + projLastY) / 2 + 2} textAnchor="middle"
+                  fill={accent} fontSize="8" fontFamily="Inter, system-ui, sans-serif" fontWeight="800">
+                  {pat.distancePct?.toFixed(1)}%↑
+                </text>
+
+                {/* Status badge */}
+                <rect x={toX(th1Idx)} y={toY(projAt(th1Idx)) - 22} rx="6" ry="6" width="82" height="16"
+                  fill={accent} opacity="0.15" />
+                <text x={toX(th1Idx) + 41} y={toY(projAt(th1Idx)) - 11} textAnchor="middle"
+                  fill={accent} fontSize="7.5" fontFamily="Inter, system-ui, sans-serif" fontWeight="700"
+                  letterSpacing="0.5">{isGold ? '⚡ IMMINENT' : 'FORMING'} TL</text>
+              </g>
+            );
+          }
+
           return null;
         })}
 
