@@ -201,7 +201,7 @@ export default function MacroIndicators({ tickers }) {
     : null;
 
   return (
-    <div className="terminal-panel flex flex-col h-full overflow-hidden">
+    <div className="terminal-panel flex flex-col">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-[hsl(217,33%,20%)] flex-shrink-0">
         <div className="flex items-center gap-2">
@@ -214,8 +214,8 @@ export default function MacroIndicators({ tickers }) {
         </button>
       </div>
 
-      {/* Scrollable content */}
-      <div className="flex-1 overflow-y-auto min-h-0 pb-2">
+      {/* Content */}
+      <div className="pb-2">
 
         {/* ── Crypto Sentiment ───────────────────────────────────────────── */}
         <SectionHeader title="Crypto" icon="₿" />

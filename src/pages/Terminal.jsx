@@ -171,33 +171,40 @@ export default function Terminal() {
         {/* Right column — narrow, stacked vertically */}
         <div className="flex flex-col gap-[2px] min-h-0 overflow-hidden">
 
+          {/* Search stays pinned at top */}
           <div className="flex-shrink-0">
             <CryptoSearch activeSymbol={activeSymbol} onSymbolChange={setActiveSymbol} tickers={tickers} />
           </div>
 
-          {/* AI Signal — takes remaining vertical space */}
-          <div className="flex-1 min-h-0 overflow-hidden">
-            <Suspense fallback={<PanelFallback title="AI SIGNAL ENGINE" />}>
-              <AISignalPanel
-                symbol={activeSymbol}
-                klines={klines}
-                ticker={currentTicker}
-              />
-            </Suspense>
-          </div>
+          {/* Scrollable area: AI Signal → Macro → Depth */}
+          <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-[2px]">
 
-          <div className="flex-shrink-0">
-            <Suspense fallback={<PanelFallback title="MACRO" height="120px" />}>
-              <MacroIndicators tickers={tickers} />
-            </Suspense>
-          </div>
+            {/* AI Signal Engine */}
+            <div style={{ minHeight: 380 }}>
+              <Suspense fallback={<PanelFallback title="AI SIGNAL ENGINE" height="380px" />}>
+                <AISignalPanel
+                  symbol={activeSymbol}
+                  klines={klines}
+                  ticker={currentTicker}
+                />
+              </Suspense>
+            </div>
 
-          <div className="flex-shrink-0" style={{ height: '120px' }}>
-            <Suspense fallback={<PanelFallback title="DEPTH" height="120px" />}>
-              <DepthChart depth={depth} />
-            </Suspense>
-          </div>
+            {/* Macro indicators */}
+            <div>
+              <Suspense fallback={<PanelFallback title="MACRO" height="120px" />}>
+                <MacroIndicators tickers={tickers} />
+              </Suspense>
+            </div>
 
+            {/* Depth chart */}
+            <div style={{ height: 120, flexShrink: 0 }}>
+              <Suspense fallback={<PanelFallback title="DEPTH" height="120px" />}>
+                <DepthChart depth={depth} />
+              </Suspense>
+            </div>
+
+          </div>
 
         </div>
       </div>
