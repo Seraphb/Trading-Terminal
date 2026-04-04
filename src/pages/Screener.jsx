@@ -1,6 +1,7 @@
 import React, { Suspense, lazy, useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../components/ThemeContext';
+import { fetchStockHistory } from '../api/stockMarketClient';
 import {
   Search, Loader2, TrendingUp, TrendingDown, Filter, Eye,
   ArrowUpDown, Activity, BarChart3, Zap, ChevronDown, ChevronUp,
@@ -599,24 +600,66 @@ export default function Screener() {
     }
   }, [filters, timeframe, dateRange, symbolSearch, symLimit]);
 
-  /* --- scan stocks (placeholder) --- */
-  const runStockScan = useCallback(() => {
+  /* --- scan stocks (real data) --- */
+  const runStockScan = useCallback(async () => {
     setScanning(true);
     setError(null);
     setResults([]);
-    const stocksToScan = STOCK_TICKERS.slice(0, symLimit);
+
+    const stockIntervalConfig = {
+      '1m':  { interval: '1m',  range: '7d',   bars: 500 },
+      '5m':  { interval: '5m',  range: '60d',  bars: 500 },
+      '15m': { interval: '15m', range: '60d',  bars: 500 },
+      '1h':  { interval: '1h',  range: '730d', bars: 500 },
+      '4h':  { interval: '4h',  range: '730d', bars: 500 },
+      '1d':  { interval: '1d',  range: '5y',   bars: 500 },
+      '1w':  { interval: '1w',  range: '5y',   bars: 300 },
+    };
+    const historyConfig = stockIntervalConfig[timeframe] || stockIntervalConfig['1d'];
+
+    let stocksToScan = STOCK_TICKERS.slice(0, symLimit);
+    if (symbolSearch.trim()) {
+      const q = symbolSearch.trim().toUpperCase().replace(/\s+/g, '');
+      const matched = STOCK_TICKERS.filter(t => t.startsWith(q));
+      stocksToScan = matched.length ? matched : [q];
+    }
+
     setProgress({ done: 0, total: stocksToScan.length });
 
-    // Simulate brief loading for UX
-    setTimeout(() => {
-      const allResults = stocksToScan.map(t => generateStockPlaceholder(t));
-      setProgress({ done: stocksToScan.length, total: stocksToScan.length });
+    const allResults = [];
+    const batchSize = 3;
+    try {
+      for (let i = 0; i < stocksToScan.length; i += batchSize) {
+        const batch = stocksToScan.slice(i, i + batchSize);
+        const promises = batch.map(async (sym) => {
+          try {
+            const candles = await fetchStockHistory(sym, historyConfig);
+            if (!candles || candles.length < 30) return null;
+            // Convert candle objects to Binance-style kline arrays for computeIndicators
+            // Binance format: [openTime, open, high, low, close, volume, ...]
+            const klines = candles.map(c => [c.time, c.open, c.high, c.low, c.close, c.volume]);
+            const lastClose = candles[candles.length - 1]?.close ?? 0;
+            const prevClose = candles[candles.length - 2]?.close ?? lastClose;
+            const priceChangePercent = prevClose > 0 ? ((lastClose - prevClose) / prevClose) * 100 : 0;
+            const quoteVolume = (candles[candles.length - 1]?.volume ?? 0) * lastClose;
+            const ticker = { priceChangePercent: String(priceChangePercent), quoteVolume: String(quoteVolume) };
+            const indicators = computeIndicators(klines, ticker);
+            return { symbol: sym, ...indicators };
+          } catch { return null; }
+        });
+        const batchResults = await Promise.all(promises);
+        batchResults.forEach(r => { if (r) allResults.push(r); });
+        setProgress({ done: Math.min(i + batchSize, stocksToScan.length), total: stocksToScan.length });
+      }
       const filtered = allResults.filter(r => matchesFilters(r, filters));
       setResults(filtered);
       sendScanAlert(filtered, 'stocks');
+    } catch (err) {
+      setError(err.message);
+    } finally {
       setScanning(false);
-    }, 600);
-  }, [filters, symLimit]);
+    }
+  }, [filters, timeframe, symLimit, symbolSearch]);
 
   const runScan = useCallback(() => {
     if (mode === 'crypto') runCryptoScan();
@@ -792,44 +835,23 @@ export default function Screener() {
 
           {/* Symbol Count */}
           <div style={{ marginBottom: '14px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
               <div style={{ fontSize: '10px', textTransform: 'uppercase', color: mutedC, fontWeight: 700, letterSpacing: '0.7px' }}>
                 {isCrypto ? 'Symbols to Scan' : 'Stocks to Scan'}
               </div>
-              <span style={{ fontSize: '11px', color: accentC, fontWeight: 700 }}>Top {symLimit}</span>
+              <span style={{ fontSize: '11px', color: accentC, fontWeight: 700 }}>{symLimit}</span>
             </div>
-            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '5px' }}>
-              {(isCrypto ? [25, 50, 100, 200] : [10, 25, 50, 100]).map(n => (
-                <button key={n} onClick={() => setSymLimit(n)} style={{
-                  flex: 1, padding: '4px 0', borderRadius: '6px',
-                  border: `1px solid ${symLimit === n ? accentC + '88' : borderC}`,
-                  background: symLimit === n ? `${accentC}18` : 'transparent',
-                  color: symLimit === n ? accentC : mutedC,
-                  fontSize: '11px', fontWeight: 600, cursor: 'pointer', transition: 'all 0.12s',
-                }}>
-                  {n}
-                </button>
-              ))}
-            </div>
-            <input
-              type="number"
-              min={1}
-              max={isCrypto ? 500 : 200}
-              value={symLimit}
-              onChange={e => {
-                const v = Math.max(1, Math.min(isCrypto ? 500 : 200, Number(e.target.value) || 1));
-                setSymLimit(v);
-              }}
-              placeholder="Custom #"
-              style={{
-                width: '100%', padding: '5px 9px', borderRadius: '7px',
-                border: `1px solid ${borderC}`, background: cardBg, color: textC,
-                fontSize: '12px', outline: 'none', boxSizing: 'border-box',
-                transition: 'border-color 0.15s',
-              }}
-              onFocus={e => { e.target.style.borderColor = accentC; }}
-              onBlur={e => { e.target.style.borderColor = borderC; }}
-            />
+            {(() => {
+              const maxLimit = isCrypto ? 500 : 200;
+              const sliderFill = ((symLimit - 1) / (maxLimit - 1)) * 100;
+              const sliderTrack = dark ? 'hsl(217,33%,21%)' : 'hsl(210,20%,88%)';
+              return (
+                <input type="range" min={1} max={maxLimit} step={1} value={symLimit}
+                  onChange={e => setSymLimit(Number(e.target.value))}
+                  className="w-full h-1.5 rounded-lg appearance-none cursor-pointer"
+                  style={{ background: `linear-gradient(90deg, ${accentC} ${sliderFill}%, ${sliderTrack} ${sliderFill}%)` }} />
+              );
+            })()}
           </div>
 
           {/* Timeframe */}
@@ -893,71 +915,6 @@ export default function Screener() {
               })}
             </div>
           </div>
-
-          {/* RSI Filter */}
-          <FilterSection label="RSI (14)" mutedC={mutedC} borderC={borderC} cardBg={cardBg}
-            enabled={filters.rsiEnabled}
-            onToggle={() => setFilter('rsiEnabled', !filters.rsiEnabled)}
-            accentC={accentC}
-          >
-            <div style={{ display: 'flex', gap: '4px', marginBottom: '8px', flexWrap: 'wrap' }}>
-              {[
-                { label: 'Oversold <30', fn: () => { setFilter('rsiEnabled', true); setFilter('rsiMin', 0); setFilter('rsiMax', 30); } },
-                { label: 'Overbought >70', fn: () => { setFilter('rsiEnabled', true); setFilter('rsiMin', 70); setFilter('rsiMax', 100); } },
-                { label: 'Custom', fn: () => { setFilter('rsiEnabled', true); } },
-              ].map(btn => (
-                <button key={btn.label} onClick={btn.fn} style={{
-                  padding: '3px 7px', borderRadius: '5px', border: `1px solid ${borderC}`,
-                  background: 'transparent', color: mutedC, fontSize: '10px', cursor: 'pointer',
-                  transition: 'all 0.1s',
-                }}
-                  onMouseEnter={e => { e.currentTarget.style.color = textC; e.currentTarget.style.borderColor = accentC; }}
-                  onMouseLeave={e => { e.currentTarget.style.color = mutedC; e.currentTarget.style.borderColor = borderC; }}
-                >
-                  {btn.label}
-                </button>
-              ))}
-            </div>
-            {filters.rsiEnabled && (
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                  <span style={{ fontSize: '10px', color: accentC, fontWeight: 600 }}>{filters.rsiMin}</span>
-                  <span style={{ fontSize: '10px', color: mutedC }}>RSI range</span>
-                  <span style={{ fontSize: '10px', color: accentC, fontWeight: 600 }}>{filters.rsiMax}</span>
-                </div>
-                <div style={{ display: 'flex', gap: '6px' }}>
-                  <input type="range" min={0} max={100} value={filters.rsiMin}
-                    onChange={e => setFilter('rsiMin', Number(e.target.value))}
-                    style={{ flex: 1, accentColor: accentC }} />
-                  <input type="range" min={0} max={100} value={filters.rsiMax}
-                    onChange={e => setFilter('rsiMax', Number(e.target.value))}
-                    style={{ flex: 1, accentColor: accentC }} />
-                </div>
-              </div>
-            )}
-          </FilterSection>
-
-          {/* Price Change 24h */}
-          <FilterSection label="Price Change 24h" mutedC={mutedC} borderC={borderC} cardBg={cardBg}>
-            <SelectFilter value={filters.priceChangePreset}
-              onChange={v => setFilter('priceChangePreset', v)}
-              options={[['any','Any'],['gt5','> +5%'],['gt10','> +10%'],['lt-5','< −5%'],['lt-10','< −10%']]}
-              cardBg={cardBg} borderC={borderC} textC={textC} accentC={accentC} dark={dark} />
-          </FilterSection>
-
-          {/* Min Volume */}
-          <FilterSection label={isCrypto ? 'Min Volume (USDT)' : 'Min Volume ($)'} mutedC={mutedC} borderC={borderC} cardBg={cardBg}>
-            <input type="range" min={0} max={isCrypto ? 500000000 : 5000000000} step={isCrypto ? 5000000 : 50000000}
-              value={filters.minVolume}
-              onChange={e => setFilter('minVolume', Number(e.target.value))}
-              style={{ width: '100%', accentColor: accentC }} />
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '3px' }}>
-              <span style={{ fontSize: '10px', color: mutedC }}>Any</span>
-              <span style={{ fontSize: '10px', color: filters.minVolume > 0 ? accentC : mutedC, fontWeight: 600 }}>
-                {filters.minVolume > 0 ? fmtVol(filters.minVolume) : '—'}
-              </span>
-            </div>
-          </FilterSection>
 
           {/* MA Distance */}
           <FilterSection label="MA Distance %" mutedC={mutedC} borderC={borderC} cardBg={cardBg}>
@@ -1030,6 +987,71 @@ export default function Screener() {
             <SelectFilter value={filters.macd} onChange={v => setFilter('macd', v)}
               options={[['any','Any'],['bullish','Bullish Cross'],['bearish','Bearish Cross']]}
               cardBg={cardBg} borderC={borderC} textC={textC} accentC={accentC} dark={dark} />
+          </FilterSection>
+
+          {/* RSI Filter */}
+          <FilterSection label="RSI (14)" mutedC={mutedC} borderC={borderC} cardBg={cardBg}
+            enabled={filters.rsiEnabled}
+            onToggle={() => setFilter('rsiEnabled', !filters.rsiEnabled)}
+            accentC={accentC}
+          >
+            <div style={{ display: 'flex', gap: '4px', marginBottom: '8px', flexWrap: 'wrap' }}>
+              {[
+                { label: 'Oversold <30', fn: () => { setFilter('rsiEnabled', true); setFilter('rsiMin', 0); setFilter('rsiMax', 30); } },
+                { label: 'Overbought >70', fn: () => { setFilter('rsiEnabled', true); setFilter('rsiMin', 70); setFilter('rsiMax', 100); } },
+                { label: 'Custom', fn: () => { setFilter('rsiEnabled', true); } },
+              ].map(btn => (
+                <button key={btn.label} onClick={btn.fn} style={{
+                  padding: '3px 7px', borderRadius: '5px', border: `1px solid ${borderC}`,
+                  background: 'transparent', color: mutedC, fontSize: '10px', cursor: 'pointer',
+                  transition: 'all 0.1s',
+                }}
+                  onMouseEnter={e => { e.currentTarget.style.color = textC; e.currentTarget.style.borderColor = accentC; }}
+                  onMouseLeave={e => { e.currentTarget.style.color = mutedC; e.currentTarget.style.borderColor = borderC; }}
+                >
+                  {btn.label}
+                </button>
+              ))}
+            </div>
+            {filters.rsiEnabled && (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                  <span style={{ fontSize: '10px', color: accentC, fontWeight: 600 }}>{filters.rsiMin}</span>
+                  <span style={{ fontSize: '10px', color: mutedC }}>RSI range</span>
+                  <span style={{ fontSize: '10px', color: accentC, fontWeight: 600 }}>{filters.rsiMax}</span>
+                </div>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <input type="range" min={0} max={100} value={filters.rsiMin}
+                    onChange={e => setFilter('rsiMin', Number(e.target.value))}
+                    style={{ flex: 1, accentColor: accentC }} />
+                  <input type="range" min={0} max={100} value={filters.rsiMax}
+                    onChange={e => setFilter('rsiMax', Number(e.target.value))}
+                    style={{ flex: 1, accentColor: accentC }} />
+                </div>
+              </div>
+            )}
+          </FilterSection>
+
+          {/* Price Change 24h */}
+          <FilterSection label="Price Change 24h" mutedC={mutedC} borderC={borderC} cardBg={cardBg}>
+            <SelectFilter value={filters.priceChangePreset}
+              onChange={v => setFilter('priceChangePreset', v)}
+              options={[['any','Any'],['gt5','> +5%'],['gt10','> +10%'],['lt-5','< −5%'],['lt-10','< −10%']]}
+              cardBg={cardBg} borderC={borderC} textC={textC} accentC={accentC} dark={dark} />
+          </FilterSection>
+
+          {/* Min Volume */}
+          <FilterSection label={isCrypto ? 'Min Volume (USDT)' : 'Min Volume ($)'} mutedC={mutedC} borderC={borderC} cardBg={cardBg}>
+            <input type="range" min={0} max={isCrypto ? 500000000 : 5000000000} step={isCrypto ? 5000000 : 50000000}
+              value={filters.minVolume}
+              onChange={e => setFilter('minVolume', Number(e.target.value))}
+              style={{ width: '100%', accentColor: accentC }} />
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '3px' }}>
+              <span style={{ fontSize: '10px', color: mutedC }}>Any</span>
+              <span style={{ fontSize: '10px', color: filters.minVolume > 0 ? accentC : mutedC, fontWeight: 600 }}>
+                {filters.minVolume > 0 ? fmtVol(filters.minVolume) : '—'}
+              </span>
+            </div>
           </FilterSection>
 
           <div style={{ height: '80px' }} />
@@ -1110,15 +1132,6 @@ export default function Screener() {
                 return <span style={{ color: accentC }}>({cnt} candles)</span>;
               })()}
             </span>
-            {!isCrypto && (
-              <span style={{
-                fontSize: '10px', padding: '2px 7px', borderRadius: '20px',
-                background: '#f59e0b18', color: '#f59e0b',
-                border: '1px solid #f59e0b33', fontWeight: 600, letterSpacing: '0.4px',
-              }}>
-                DEMO
-              </span>
-            )}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
             {scanning && (
