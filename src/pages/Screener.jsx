@@ -317,7 +317,7 @@ const DEFAULT_FILTERS = {
   vsMaPeriod: 50,
   maDistEnabled: true,
   maDistPeriod: 'ema_200', // 'ema_N' or 'sma_N'
-  maDistMode: 'above',     // 'within' | 'above' | 'below'
+  maDistMode: 'within',    // 'within' | 'above' | 'below'
   maDistPct: 0,
   volumeChangeMin: null,
   priceChangePreset: 'any',
@@ -725,6 +725,12 @@ export default function Screener() {
   const searchedMaLabel = `${searchedMaType.toUpperCase()} ${searchedMaPeriod}`;
   const searchedMaKey = `distSearched`; // dynamic distance column
 
+  // Hide fixed dist columns that duplicate the searched MA column
+  const hiddenDistKeys = new Set();
+  if (searchedMaType === 'ema' && [21, 50, 200].includes(searchedMaPeriod)) {
+    hiddenDistKeys.add(`dist${searchedMaPeriod}`);
+  }
+
   const columns = [
     { key: 'symbol',        label: 'Symbol',      w: '110px' },
     { key: 'price',         label: 'Price',       w: '100px' },
@@ -739,7 +745,7 @@ export default function Screener() {
     { key: 'volumeChange',  label: 'Vol Chg %',   w: '90px'  },
     { key: 'macdCross',     label: 'MACD',        w: '85px'  },
     { key: 'quoteVolume',   label: 'Volume 24h',  w: '100px' },
-  ];
+  ].filter(col => !hiddenDistKeys.has(col.key));
 
   // Pre-compute distances for sorting/display
   const sortedResultsWithDist = useMemo(() => {
@@ -1333,17 +1339,23 @@ export default function Screener() {
                       <DistBadge val={row.distSearched} gold />
                     </td>
                     {/* Δ EMA21 */}
-                    <td style={{ padding: '7px 10px', fontFamily: 'monospace', fontSize: '11px', fontWeight: 600 }}>
-                      <DistBadge val={row.dist21} />
-                    </td>
+                    {!hiddenDistKeys.has('dist21') && (
+                      <td style={{ padding: '7px 10px', fontFamily: 'monospace', fontSize: '11px', fontWeight: 600 }}>
+                        <DistBadge val={row.dist21} />
+                      </td>
+                    )}
                     {/* Δ EMA50 */}
-                    <td style={{ padding: '7px 10px', fontFamily: 'monospace', fontSize: '11px', fontWeight: 600 }}>
-                      <DistBadge val={row.dist50} />
-                    </td>
+                    {!hiddenDistKeys.has('dist50') && (
+                      <td style={{ padding: '7px 10px', fontFamily: 'monospace', fontSize: '11px', fontWeight: 600 }}>
+                        <DistBadge val={row.dist50} />
+                      </td>
+                    )}
                     {/* Δ EMA200 */}
-                    <td style={{ padding: '7px 10px', fontFamily: 'monospace', fontSize: '11px', fontWeight: 600 }}>
-                      <DistBadge val={row.dist200} />
-                    </td>
+                    {!hiddenDistKeys.has('dist200') && (
+                      <td style={{ padding: '7px 10px', fontFamily: 'monospace', fontSize: '11px', fontWeight: 600 }}>
+                        <DistBadge val={row.dist200} />
+                      </td>
+                    )}
 
                     {/* EMA Cross */}
                     <td style={{ padding: '7px 10px' }}><MACDBadge cross={row.emaCross} /></td>
