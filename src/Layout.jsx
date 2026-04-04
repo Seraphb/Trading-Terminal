@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
-import { Activity, BarChart3, Brain, Briefcase, Eye, Flame, GitCompare, LayoutGrid, Moon, Newspaper, Scan, SlidersHorizontal, Sparkles, Sun } from 'lucide-react';
+import { Activity, BarChart3, Brain, Briefcase, Eye, Flame, GitCompare, LayoutGrid, Moon, Newspaper, Scan, SlidersHorizontal, Sparkles, Sun, Zap } from 'lucide-react';
 import { ThemeProvider, useTheme } from './components/ThemeContext';
 import UserProfileMenu from '@/components/profile/UserProfileMenu';
 
@@ -139,6 +139,18 @@ function NavBar() {
       >
         <Brain className="h-3.5 w-3.5" />
         Signals
+      </Link>
+
+      <Link
+        to={createPageUrl('PumpSignals')}
+        className={`flex items-center gap-1.5 rounded-2xl px-3 py-2 text-xs font-medium transition-all ring-1 ${
+          isActive('PumpSignals')
+            ? 'bg-amber-500/15 text-amber-300 ring-amber-500/40'
+            : 'ring-transparent text-slate-400 hover:text-slate-200 hover:bg-white/5'
+        }`}
+      >
+        <Zap className="h-3.5 w-3.5" />
+        Pump Scan
       </Link>
 
 

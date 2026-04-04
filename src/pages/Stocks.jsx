@@ -31,8 +31,12 @@ function PanelFallback({ height = '100%' }) {
 
 export default function Stocks() {
   const { theme } = useTheme();
-  const [symbol, setSymbol]   = useState('AAPL');
-  const [input, setInput]     = useState('AAPL');
+  const [symbol, setSymbol]   = useState(() => {
+    const stored = localStorage.getItem('stockSymbol');
+    if (stored) { localStorage.removeItem('stockSymbol'); return stored; }
+    return 'AAPL';
+  });
+  const [input, setInput]     = useState(symbol);
   const [interval, setInterval_] = useState('1w');
   const [dateRange, setDateRange] = useState(DEFAULT_DATE_RANGE_BY_INTERVAL['1w']);
   const [klines, setKlines]   = useState([]);

@@ -28,14 +28,19 @@ function PanelFallback({ title, height = '100%' }) {
 export default function Terminal() {
   const [searchParams] = useSearchParams();
   const urlSymbol = searchParams.get('symbol');
-  const [activeSymbol, setActiveSymbol] = useState(() => urlSymbol ? urlSymbol.toLowerCase() : 'btcusdt');
+  const [activeSymbol, setActiveSymbol] = useState(() => {
+    if (urlSymbol) return urlSymbol.toLowerCase();
+    const stored = localStorage.getItem('terminalSymbol');
+    if (stored) { localStorage.removeItem('terminalSymbol'); return stored.toLowerCase(); }
+    return 'btcusdt';
+  });
   const [interval, setChartInterval]   = useState('1w');
   const [dateRange, setDateRange]      = useState('3Y');
   const [visibleRange, setVisibleRange] = useState(null);
   const [watchlistSymbols, setWatchlistSymbols] = useState(() => getTerminalWatchlist());
   const { theme } = useTheme();
 
-  // React to URL symbol changes (e.g. navigating from Memes page)
+  // React to URL symbol changes (e.g. navigating from Memes page or Pump Scanner)
   useEffect(() => {
     if (urlSymbol) setActiveSymbol(urlSymbol.toLowerCase());
   }, [urlSymbol]);

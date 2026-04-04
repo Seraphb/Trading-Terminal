@@ -56,6 +56,7 @@ const Insiders = lazy(() => import('./pages/Insiders'));
 const Memes = lazy(() => import('./pages/Memes'));
 const News = lazy(() => import('./pages/News'));
 const Portfolio = lazy(() => import('./pages/Portfolio'));
+const PumpSignals = lazy(() => import('./pages/PumpSignals'));
 const Scanner = lazy(() => import('./pages/Scanner'));
 const Screener = lazy(() => import('./pages/Screener'));
 const Signals = lazy(() => import('./pages/Signals'));
@@ -70,6 +71,7 @@ export const PAGES = {
     "Memes": Memes,
     "News": News,
     "Portfolio": Portfolio,
+    "PumpSignals": PumpSignals,
     "Scanner": Scanner,
     "Screener": Screener,
     "Signals": Signals,
