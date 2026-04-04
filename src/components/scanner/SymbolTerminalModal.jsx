@@ -1,17 +1,9 @@
-import React, { Suspense, lazy, useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 import { useTheme } from '../ThemeContext';
 import PriceChart from '../terminal/PriceChart';
-import { useBinanceKlines, useBinanceDepth, useBinanceTrades } from '../terminal/useBinanceWS';
+import { useBinanceKlines } from '../terminal/useBinanceWS';
 import { fetchStockHistory } from '@/api/stockMarketClient';
-
-const DepthChart = lazy(() => import('../terminal/DepthChart'));
-const TradesFeed = lazy(() => import('../terminal/TradesFeed'));
-const OrderBookHeatmap = lazy(() => import('../terminal/OrderBookHeatmap'));
-
-function PanelSkeleton() {
-  return <div className="h-full rounded animate-pulse" style={{ background: 'rgba(30,41,59,0.4)' }} />;
-}
 
 // ── Crypto view — live via Binance WebSocket ───────────────────────────────
 function CryptoView({ symbol, goldSignalTime, goldSignalPrice, signals, scanTimeframe, highlightMA }) {
@@ -22,46 +14,23 @@ function CryptoView({ symbol, goldSignalTime, goldSignalPrice, signals, scanTime
   const [dateRange, setDateRange]     = useState(initRange);
   const [visibleRange, setVisibleRange] = useState(null);
   const { klines, loading }           = useBinanceKlines(sym, interval);
-  const depth                         = useBinanceDepth(sym);
-  const trades                        = useBinanceTrades(sym);
-  const lastPrice                     = klines[klines.length - 1]?.close ?? 0;
 
   return (
-    <div className="flex flex-col h-full gap-[2px]">
-      <div className="flex-1 min-h-0">
-        <PriceChart
-          klines={klines}
-          loading={loading}
-          symbol={sym}
-          interval={interval}
-          dateRange={dateRange}
-          onIntervalChange={setInterval}
-          onDateRangeChange={setDateRange}
-          onVisibleRangeChange={setVisibleRange}
-          goldSignalTime={goldSignalTime}
-          goldSignalPrice={goldSignalPrice}
-          signals={signals}
-          highlightMA={highlightMA}
-        />
-      </div>
-
-      <div className="flex gap-[2px] flex-shrink-0" style={{ height: 130 }}>
-        <div className="flex-1 min-w-0">
-          <Suspense fallback={<PanelSkeleton />}>
-            <DepthChart depth={depth} />
-          </Suspense>
-        </div>
-        <div className="flex-1 min-w-0">
-          <Suspense fallback={<PanelSkeleton />}>
-            <TradesFeed trades={trades} />
-          </Suspense>
-        </div>
-        <div className="flex-1 min-w-0">
-          <Suspense fallback={<PanelSkeleton />}>
-            <OrderBookHeatmap depth={depth} lastPrice={lastPrice} />
-          </Suspense>
-        </div>
-      </div>
+    <div className="h-full">
+      <PriceChart
+        klines={klines}
+        loading={loading}
+        symbol={sym}
+        interval={interval}
+        dateRange={dateRange}
+        onIntervalChange={setInterval}
+        onDateRangeChange={setDateRange}
+        onVisibleRangeChange={setVisibleRange}
+        goldSignalTime={goldSignalTime}
+        goldSignalPrice={goldSignalPrice}
+        signals={signals}
+        highlightMA={highlightMA}
+      />
     </div>
   );
 }

@@ -6,7 +6,7 @@ import {
   Search, Loader2, TrendingUp, TrendingDown, Filter, Eye,
   ArrowUpDown, Activity, BarChart3, Zap, ChevronDown, ChevronUp,
   SlidersHorizontal, Play, RotateCcw, Sparkles, ToggleLeft, ToggleRight,
-  Coins, LineChart, Save, Download, Bell, BellOff, Clock
+  Coins, LineChart, Save, Download, Bell, BellOff, Clock, Star
 } from 'lucide-react';
 
 const SymbolTerminalModal = lazy(() => import('../components/scanner/SymbolTerminalModal'));
@@ -484,8 +484,12 @@ export default function Screener() {
 
   const [mode, setMode] = useState(saved?.mode ?? 'crypto'); // 'crypto' | 'stocks'
   const [filters, setFilters] = useState(saved?.filters ? { ...DEFAULT_FILTERS, ...saved.filters } : { ...DEFAULT_FILTERS });
-  const [results, setResults] = useState([]);
+  const [results, setResults] = useState([]);      // raw (unfiltered) scan results
   const [scanning, setScanning] = useState(false);
+  const [starredSymbols, setStarredSymbols] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('screener_starred') || '[]')); } catch { return new Set(); }
+  });
+  const [showStarredOnly, setShowStarredOnly] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [sortCol, setSortCol] = useState('priceChange24h');
   const [sortDir, setSortDir] = useState('desc');
@@ -591,7 +595,7 @@ export default function Screener() {
       }
 
       const filtered = allResults.filter(r => matchesFilters(r, filters));
-      setResults(filtered);
+      setResults(allResults); // store raw; filtering is applied live in the display
       sendScanAlert(filtered, 'crypto');
     } catch (err) {
       setError(err.message);
@@ -652,7 +656,7 @@ export default function Screener() {
         setProgress({ done: Math.min(i + batchSize, stocksToScan.length), total: stocksToScan.length });
       }
       const filtered = allResults.filter(r => matchesFilters(r, filters));
-      setResults(filtered);
+      setResults(allResults); // store raw; filtering is applied live in the display
       sendScanAlert(filtered, 'stocks');
     } catch (err) {
       setError(err.message);
@@ -672,8 +676,19 @@ export default function Screener() {
     setSortCol(col);
   }, [sortCol]);
 
+  const toggleStar = useCallback((symbol) => {
+    setStarredSymbols(prev => {
+      const next = new Set(prev);
+      if (next.has(symbol)) next.delete(symbol); else next.add(symbol);
+      localStorage.setItem('screener_starred', JSON.stringify([...next]));
+      return next;
+    });
+  }, []);
+
   const sortedResults = useMemo(() => {
-    const arr = [...results];
+    // Apply current filters live so table always reflects current settings
+    let arr = results.filter(r => matchesFilters(r, filters));
+    if (showStarredOnly) arr = arr.filter(r => starredSymbols.has(r.symbol));
     arr.sort((a, b) => {
       let va = a[sortCol], vb = b[sortCol];
       if (typeof va === 'string') { va = va === 'above' || va === 'bullish' ? 1 : 0; vb = vb === 'above' || vb === 'bullish' ? 1 : 0; }
@@ -682,7 +697,7 @@ export default function Screener() {
       return sortDir === 'asc' ? va - vb : vb - va;
     });
     return arr;
-  }, [results, sortCol, sortDir]);
+  }, [results, filters, sortCol, sortDir, showStarredOnly, starredSymbols]);
 
   /* --- open terminal --- */
   const openTerminal = useCallback((row) => {
@@ -1146,13 +1161,30 @@ export default function Screener() {
                 Scanning {progress.done}/{progress.total}
               </span>
             )}
-            {!scanning && results.length > 0 && (
+            {!scanning && sortedResults.length > 0 && (
               <span style={{
                 padding: '3px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: 600,
                 background: `${accentC}18`, color: accentC, border: `1px solid ${accentC}33`,
               }}>
-                {results.length} result{results.length !== 1 ? 's' : ''}
+                {sortedResults.length} result{sortedResults.length !== 1 ? 's' : ''}
+                {results.length !== sortedResults.length && (
+                  <span style={{ color: mutedC, fontWeight: 400 }}> / {results.length} scanned</span>
+                )}
               </span>
+            )}
+            {/* Starred filter */}
+            {starredSymbols.size > 0 && (
+              <button onClick={() => setShowStarredOnly(p => !p)} style={{
+                display: 'flex', alignItems: 'center', gap: '4px',
+                padding: '4px 9px', borderRadius: '7px', cursor: 'pointer', fontSize: '11px', fontWeight: 600,
+                border: `1px solid ${showStarredOnly ? '#f59e0b' : borderC}`,
+                background: showStarredOnly ? '#f59e0b18' : 'transparent',
+                color: showStarredOnly ? '#f59e0b' : mutedC,
+                transition: 'all 0.15s',
+              }}>
+                <Star size={11} fill={showStarredOnly ? '#f59e0b' : 'none'} />
+                {starredSymbols.size} Starred
+              </button>
             )}
             {/* CSV Export */}
             {results.length > 0 && !scanning && (
@@ -1226,7 +1258,7 @@ export default function Screener() {
 
         {/* Results table */}
         <div style={{ flex: 1, overflow: 'auto' }}>
-          {results.length === 0 && !scanning ? (
+          {(results.length === 0 || sortedResults.length === 0) && !scanning ? (
             <div style={{
               display: 'flex', flexDirection: 'column', alignItems: 'center',
               justifyContent: 'center', height: '100%', color: mutedC, gap: '10px',
@@ -1240,19 +1272,24 @@ export default function Screener() {
                 <BarChart3 size={28} strokeWidth={1.5} color={mutedC} />
               </div>
               <div style={{ fontSize: '14px', fontWeight: 600, color: textC }}>
-                {isCrypto ? 'Set filters and run Auto-Scan' : 'Configure filters and scan stocks'}
+                {results.length === 0
+                  ? (isCrypto ? 'Set filters and run Auto-Scan' : 'Configure filters and scan stocks')
+                  : 'No results match current filters'}
               </div>
               <div style={{ fontSize: '12px', color: mutedC, maxWidth: '320px', textAlign: 'center', lineHeight: 1.5 }}>
-                {isCrypto
-                  ? 'Scans top 50 USDT pairs by volume via Binance API with live kline data'
-                  : `Screens ${STOCK_TICKERS.length} tickers using technical indicator simulation`}
+                {results.length === 0
+                  ? (isCrypto
+                    ? 'Scans top 50 USDT pairs by volume via Binance API with live kline data'
+                    : `Screens ${STOCK_TICKERS.length} tickers using technical indicator simulation`)
+                  : `${results.length} symbols scanned — adjust filters to see matches`}
               </div>
             </div>
           ) : (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
               <thead>
                 <tr style={{ position: 'sticky', top: 0, background: topBarBg, zIndex: 2 }}>
-                  <th style={{ width: '36px', padding: '9px 8px', borderBottom: `1px solid ${borderC}` }} />
+                  <th style={{ width: '28px', padding: '9px 4px 9px 8px', borderBottom: `1px solid ${borderC}` }} />
+                  <th style={{ width: '28px', padding: '9px 4px', borderBottom: `1px solid ${borderC}` }} />
                   {columns.map(col => (
                     <th key={col.key} onClick={() => handleSort(col.key)} style={{
                       padding: '9px 10px', textAlign: 'left', cursor: 'pointer',
@@ -1281,7 +1318,7 @@ export default function Screener() {
                     onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
                   >
                     {/* Eye button */}
-                    <td style={{ padding: '7px 6px 7px 10px', textAlign: 'center' }}>
+                    <td style={{ padding: '7px 4px 7px 8px', textAlign: 'center' }}>
                       <button onClick={() => openTerminal(row)} style={{
                         background: 'none', border: 'none', cursor: 'pointer', color: mutedC,
                         padding: '4px', borderRadius: '5px', display: 'flex', alignItems: 'center',
@@ -1291,6 +1328,18 @@ export default function Screener() {
                         onMouseLeave={e => { e.currentTarget.style.color = mutedC; }}
                       >
                         <Eye size={14} />
+                      </button>
+                    </td>
+
+                    {/* Star button */}
+                    <td style={{ padding: '7px 4px', textAlign: 'center' }}>
+                      <button onClick={() => toggleStar(row.symbol)} style={{
+                        background: 'none', border: 'none', cursor: 'pointer',
+                        padding: '4px', borderRadius: '5px', display: 'flex', alignItems: 'center',
+                        color: starredSymbols.has(row.symbol) ? '#f59e0b' : mutedC,
+                        transition: 'color 0.1s',
+                      }}>
+                        <Star size={13} fill={starredSymbols.has(row.symbol) ? '#f59e0b' : 'none'} />
                       </button>
                     </td>
 
